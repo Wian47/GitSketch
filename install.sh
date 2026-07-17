@@ -21,13 +21,29 @@ case "${ARCH}" in
     *)       echo "✗ Unsupported architecture: ${ARCH}"; exit 1 ;;
 esac
 
+# ─── Authentication Support for Private Repos ───────────────────────────────
+
+AUTH_HEADER=""
+if [ -n "${GITHUB_TOKEN}" ]; then
+    AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
+fi
+
+curl_get() {
+    local url="$1"
+    if [ -n "${AUTH_HEADER}" ]; then
+        curl -fsSL -H "${AUTH_HEADER}" "$url"
+    else
+        curl -fsSL "$url"
+    fi
+}
+
 # ─── Resolve Download URL ───────────────────────────────────────────────────
 
 echo "🔍 Checking latest release of GitSketch..."
 API_URL="https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
 
 # Get release JSON
-JSON=$(curl -fsSL "${API_URL}" || wget -qO- "${API_URL}")
+JSON=$(curl_get "${API_URL}")
 
 # Extract release tag name
 TAG=$(echo "${JSON}" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
@@ -56,7 +72,7 @@ clean_up() {
 trap clean_up EXIT
 
 echo "📥 Downloading from ${DOWNLOAD_URL}..."
-curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/gitsketch.tar.gz"
+curl_get "${DOWNLOAD_URL}" > "${TMP_DIR}/gitsketch.tar.gz"
 
 echo "📦 Extracting package..."
 tar -xzf "${TMP_DIR}/gitsketch.tar.gz" -C "${TMP_DIR}"

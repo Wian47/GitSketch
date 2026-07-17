@@ -21,29 +21,23 @@ Built with Go + [Bubbletea v2](https://charm.land/bubbletea/v2) / [Lipgloss v2](
 ## Installation
 
 ### 1-Command Installer (Recommended)
-Run the following command to download, select the package for your OS/Arch, and install GitSketch automatically:
+Since this is a **private repository**, you must authenticate using your GitHub Personal Access Token (PAT). Pass your token as a header to curl and as an environment variable to the script:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Wian47/GitSketch/master/install.sh | sh
+curl -fsSL -H "Authorization: token <YOUR_GITHUB_TOKEN>" https://raw.githubusercontent.com/Wian47/GitSketch/master/install.sh | GITHUB_TOKEN=<YOUR_GITHUB_TOKEN> sh
 ```
 
-### Globally via Go
-To install `gitsketch` globally into your `$GOPATH/bin`:
+### Build & Install from Source
+To compile and install directly from your local source directory:
 ```bash
-go install charm.land/gitsketch@latest
-```
-*(Make sure `$GOPATH/bin` is in your system `$PATH`)*
+# Clone the repository
+git clone https://github.com/Wian47/GitSketch.git
+cd GitSketch
 
-### Build from Source
-If building locally:
-```bash
-git clone https://github.com/youruser/gitsketch.git
-cd gitsketch
-go build -o gitsketch .
+# Build and install globally to your Go binary path
+go install .
 ```
-To copy it to a folder in your `$PATH` (e.g., `/usr/local/bin`):
-```bash
-sudo cp gitsketch /usr/local/bin/
-```
+*(Make sure your Go binary path, usually `~/go/bin`, is in your system `$PATH`)*
+
 
 ---
 
