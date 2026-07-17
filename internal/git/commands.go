@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 )
@@ -58,4 +59,38 @@ func GetCurrentBranch() (string, error) {
 	}
 
 	return strings.TrimSpace(string(output)), nil
+}
+
+// GetCommitDiff retrieves the full unified diff of a commit.
+func GetCommitDiff(hash string) (string, error) {
+	cmd := exec.Command("git", "show", "--color=never", "--patch", hash)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git show: %w: %s", err, string(output))
+	}
+	return string(output), nil
+}
+
+// CreateBranch creates a new branch pointing to the specified commit.
+func CreateBranch(name, hash string) error {
+	cmd := exec.Command("git", "branch", name, hash)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// DeleteBranch deletes the specified branch. If force is true, it uses -D.
+func DeleteBranch(name string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	cmd := exec.Command("git", "branch", flag, name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }

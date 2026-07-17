@@ -14,25 +14,27 @@ import (
 
 // ─── Messages ───────────────────────────────────────────────────────────────
 
-// commitsParsedMsg is sent when the initial git log parse completes.
 type commitsParsedMsg struct {
 	commits []git.Commit
 	err     error
 }
 
-// filesLoadedMsg is sent when changed files for a commit are loaded.
 type filesLoadedMsg struct {
 	files []git.FileChange
 	hash  string
 	err   error
 }
 
-// checkoutDoneMsg is sent when a git checkout completes.
+type diffLoadedMsg struct {
+	hash string
+	diff string
+	err  error
+}
+
 type checkoutDoneMsg struct {
 	result git.CheckoutResult
 }
 
-// clearNotifyMsg clears the notification bar after a timeout.
 type clearNotifyMsg struct{}
 
 // ─── Model ──────────────────────────────────────────────────────────────────
@@ -40,16 +42,31 @@ type clearNotifyMsg struct{}
 // Model holds the entire application state for the Bubbletea program.
 type Model struct {
 	// Data
-	commits   []git.Commit
-	graphRows []graph.GraphRow
-	files     []git.FileChange
-	filesHash string // hash of the commit whose files are loaded
+	allCommits      []git.Commit
+	filteredCommits []git.Commit
+	graphRows       []graph.GraphRow
+	files           []git.FileChange
+	filesHash       string // hash of the commit whose files are loaded
+
+	// Fullscreen Diff View State
+	showDiff    bool
+	diffContent string
+	diffScroll  int
+
+	// Search / Filter State
+	searchMode  bool
+	searchQuery string
+
+	// Branch Manager State
+	branchMode    bool
+	branchSubMode string // "", "create", "delete"
+	branchInput   string
 
 	// UI State
-	cursor   int // index into graphRows of the selected commit
+	cursor    int // index into filteredCommits of the selected commit
 	scrollOff int // vertical scroll offset for the graph pane
-	width    int // terminal width
-	height   int // terminal height
+	width     int // terminal width
+	height    int // terminal height
 
 	// Mode
 	confirmCheckout bool   // showing checkout confirmation dialog
@@ -94,8 +111,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.commits = msg.commits
-		m.graphRows = graph.BuildGraph(m.commits)
+		m.allCommits = msg.commits
+		m.applyFilter()
 		m.cursor = 0
 		m.scrollOff = 0
 		// Load files for the first commit.
@@ -113,10 +130,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case diffLoadedMsg:
+		if msg.err == nil && msg.hash != "" {
+			m.diffContent = msg.diff
+			m.diffScroll = 0
+		} else if msg.err != nil {
+			m.diffContent = fmt.Sprintf("Error loading diff: %v", msg.err)
+		}
+		return m, nil
+
 	case checkoutDoneMsg:
 		m.confirmCheckout = false
 		if msg.result.Success {
-			m.notification = fmt.Sprintf(" ✓ Checked out %s", msg.result.Hash)
+			m.notification = msg.result.Message
 			m.notifyStyle = NotifySuccessStyle
 		} else {
 			m.notification = fmt.Sprintf(" ✗ %s", msg.result.Message)
@@ -161,11 +187,13 @@ func (m Model) View() tea.View {
 			lipgloss.Center, lipgloss.Center,
 			DimStyle.Render(m.loadingMsg),
 		)
+	} else if m.showDiff {
+		content = m.renderDiffView()
 	} else if len(m.graphRows) == 0 {
 		content = lipgloss.Place(
 			m.width, m.height,
 			lipgloss.Center, lipgloss.Center,
-			DimStyle.Render("No commits found."),
+			DimStyle.Render("No matching commits found."),
 		)
 	} else {
 		content = m.renderLayout()
@@ -181,7 +209,113 @@ func (m Model) View() tea.View {
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	// If in checkout confirmation mode, only accept y/n/esc.
+	// ── Mode: Fullscreen Diff Viewer ──
+	if m.showDiff {
+		switch key {
+		case KeyEsc, KeyEnter, KeyQ:
+			m.showDiff = false
+			m.diffContent = ""
+			return m, nil
+		case KeyUp, KeyK:
+			if m.diffScroll > 0 {
+				m.diffScroll--
+			}
+			return m, nil
+		case KeyDown, KeyJ:
+			m.diffScroll++
+			return m, nil
+		case KeyPgUp:
+			m.diffScroll -= m.height - 4
+			if m.diffScroll < 0 {
+				m.diffScroll = 0
+			}
+			return m, nil
+		case KeyPgDown:
+			m.diffScroll += m.height - 4
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// ── Mode: Search / Filter Input ──
+	if m.searchMode {
+		switch key {
+		case KeyEsc:
+			m.searchMode = false
+			m.searchQuery = ""
+			m.applyFilter()
+			return m, nil
+		case KeyEnter:
+			m.searchMode = false
+			return m, nil
+		case "backspace":
+			if len(m.searchQuery) > 0 {
+				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+				m.applyFilter()
+			}
+			return m, nil
+		default:
+			// Capture printable characters
+			if len(key) == 1 {
+				m.searchQuery += key
+				m.applyFilter()
+			} else if key == "space" {
+				m.searchQuery += " "
+				m.applyFilter()
+			}
+			return m, nil
+		}
+	}
+
+	// ── Mode: Branch Manager ──
+	if m.branchMode {
+		if m.branchSubMode == "" {
+			switch key {
+			case "c":
+				m.branchSubMode = "create"
+				m.branchInput = ""
+				return m, nil
+			case "d":
+				m.branchSubMode = "delete"
+				m.branchInput = ""
+				return m, nil
+			case KeyEsc:
+				m.branchMode = false
+				return m, nil
+			}
+			return m, nil
+		} else {
+			// Capturing branch input name
+			switch key {
+			case KeyEsc:
+				m.branchSubMode = ""
+				return m, nil
+			case KeyEnter:
+				if m.branchInput == "" {
+					m.branchSubMode = ""
+					return m, nil
+				}
+				cmd := m.executeBranchAction()
+				m.branchMode = false
+				m.branchSubMode = ""
+				return m, cmd
+			case "backspace":
+				if len(m.branchInput) > 0 {
+					m.branchInput = m.branchInput[:len(m.branchInput)-1]
+				}
+				return m, nil
+			default:
+				if len(key) == 1 {
+					m.branchInput += key
+				} else if key == "space" {
+					m.branchInput += " "
+				}
+				return m, nil
+			}
+		}
+	}
+
+	// ── Mode: Checkout Confirmation ──
 	if m.confirmCheckout {
 		switch key {
 		case KeyY:
@@ -198,6 +332,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// ── Normal Mode ──
 	switch key {
 	case KeyQ, KeyCtrlC:
 		return m, func() tea.Msg { return tea.Quit() }
@@ -234,14 +369,73 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.confirmCheckout = true
 		}
 		return m, nil
+
+	case "/":
+		m.searchMode = true
+		m.searchQuery = ""
+		return m, nil
+
+	case "b":
+		m.branchMode = true
+		m.branchSubMode = ""
+		return m, nil
+
+	case KeyEnter:
+		c := m.selectedCommit()
+		if c != nil {
+			m.showDiff = true
+			m.diffContent = ""
+			m.diffScroll = 0
+			return m, loadDiffCmd(c.Hash)
+		}
+		return m, nil
 	}
 
 	return m, nil
 }
 
+// ─── Filter & Search Logic ──────────────────────────────────────────────────
+
+func (m *Model) applyFilter() {
+	if m.searchQuery == "" {
+		m.filteredCommits = m.allCommits
+	} else {
+		m.filteredCommits = nil
+		query := strings.ToLower(m.searchQuery)
+		for _, c := range m.allCommits {
+			match := strings.Contains(strings.ToLower(c.Hash), query) ||
+				strings.Contains(strings.ToLower(c.Subject), query) ||
+				strings.Contains(strings.ToLower(c.Author), query) ||
+				strings.Contains(strings.ToLower(c.Body), query)
+
+			if !match {
+				for _, r := range c.Refs {
+					if strings.Contains(strings.ToLower(r), query) {
+						match = true
+						break
+					}
+				}
+			}
+			if match {
+				m.filteredCommits = append(m.filteredCommits, c)
+			}
+		}
+	}
+	m.graphRows = graph.BuildGraph(m.filteredCommits)
+
+	// Clamp cursor to valid filtered range.
+	total := m.commitRowCount()
+	if m.cursor >= total {
+		m.cursor = total - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	m.adjustScroll()
+}
+
 // ─── Cursor & Scroll ────────────────────────────────────────────────────────
 
-// commitRowCount returns the number of rows that have actual commits (not connectors).
 func (m Model) commitRowCount() int {
 	count := 0
 	for _, r := range m.graphRows {
@@ -252,7 +446,6 @@ func (m Model) commitRowCount() int {
 	return count
 }
 
-// moveCursor moves the selection cursor by delta, clamping to valid commit rows.
 func (m *Model) moveCursor(delta int) {
 	total := m.commitRowCount()
 	if total == 0 {
@@ -268,13 +461,11 @@ func (m *Model) moveCursor(delta int) {
 	m.adjustScroll()
 }
 
-// adjustScroll ensures the cursor is visible in the viewport.
 func (m *Model) adjustScroll() {
 	visible := m.visibleRows()
 	if visible <= 0 {
 		return
 	}
-	// Find the actual row index for the cursor'th commit.
 	rowIdx := m.cursorRowIndex()
 	if rowIdx < m.scrollOff {
 		m.scrollOff = rowIdx
@@ -284,7 +475,6 @@ func (m *Model) adjustScroll() {
 	}
 }
 
-// cursorRowIndex returns the graphRows index for the cursor'th commit.
 func (m Model) cursorRowIndex() int {
 	commitIdx := 0
 	for i, r := range m.graphRows {
@@ -298,9 +488,7 @@ func (m Model) cursorRowIndex() int {
 	return 0
 }
 
-// visibleRows returns how many graph rows fit in the graph pane.
 func (m Model) visibleRows() int {
-	// height minus 3 (title bar + help bar + border overhead)
 	h := m.height - 4
 	if h < 1 {
 		h = 1
@@ -308,7 +496,6 @@ func (m Model) visibleRows() int {
 	return h
 }
 
-// selectedCommit returns the commit under the cursor.
 func (m Model) selectedCommit() *git.Commit {
 	commitIdx := 0
 	for i := range m.graphRows {
@@ -322,7 +509,6 @@ func (m Model) selectedCommit() *git.Commit {
 	return nil
 }
 
-// loadFilesIfNeeded returns a command to load files if the selection changed.
 func (m Model) loadFilesIfNeeded() tea.Cmd {
 	c := m.selectedCommit()
 	if c == nil {
@@ -336,20 +522,15 @@ func (m Model) loadFilesIfNeeded() tea.Cmd {
 
 // ─── Rendering ──────────────────────────────────────────────────────────────
 
-// renderLayout builds the full split-pane layout.
 func (m Model) renderLayout() string {
-	// Calculate pane widths.
 	leftWidth := m.width * 60 / 100
 	rightWidth := m.width - leftWidth
 
-	// Available height: total minus 1 for help bar.
 	paneHeight := m.height - 2
 
-	// Render panes.
-	leftContent := m.renderGraphPane(leftWidth-4, paneHeight-2) // account for border + padding
+	leftContent := m.renderGraphPane(leftWidth-4, paneHeight-2)
 	rightContent := m.renderDetailPane(rightWidth-4, paneHeight-2)
 
-	// Style the panes with borders.
 	leftPane := lipgloss.NewStyle().
 		Width(leftWidth - 2).
 		Height(paneHeight - 2).
@@ -366,32 +547,26 @@ func (m Model) renderLayout() string {
 		Padding(0, 1).
 		Render(rightContent)
 
-	// Join panes horizontally.
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-
-	// Build help/status bar.
 	helpBar := m.renderHelpBar()
 
 	return lipgloss.JoinVertical(lipgloss.Left, mainView, helpBar)
 }
 
-// renderGraphPane renders the scrollable ASCII graph with commit metadata.
 func (m Model) renderGraphPane(width, height int) string {
 	if len(m.graphRows) == 0 {
-		return DimStyle.Render("No commits.")
+		return DimStyle.Render("No matching commits.")
 	}
 
 	maxGraphCols := graph.MaxColumns(m.graphRows)
-	graphWidth := maxGraphCols*2 + 1 // each cell is char + space
+	graphWidth := maxGraphCols*2 + 1
 	metaWidth := width - graphWidth - 2
 	if metaWidth < 10 {
 		metaWidth = 10
 	}
 
 	var lines []string
-	commitIdx := 0
 
-	// Only render visible rows (scroll window).
 	endRow := m.scrollOff + height
 	if endRow > len(m.graphRows) {
 		endRow = len(m.graphRows)
@@ -399,19 +574,13 @@ func (m Model) renderGraphPane(width, height int) string {
 
 	for rowIdx := m.scrollOff; rowIdx < endRow; rowIdx++ {
 		row := m.graphRows[rowIdx]
-
-		// Build the graph prefix.
 		graphStr := m.renderGraphCells(row, maxGraphCols)
 
 		if row.Commit == nil {
-			// Connector row — just the graph lines.
 			lines = append(lines, graphStr)
 			continue
 		}
 
-		// Is this the selected commit?
-		// We need to track commit indices across all rows, not just visible ones.
-		// Recalculate: count commits before scrollOff.
 		actualCommitIdx := 0
 		for ci := 0; ci < rowIdx; ci++ {
 			if m.graphRows[ci].Commit != nil {
@@ -420,10 +589,7 @@ func (m Model) renderGraphPane(width, height int) string {
 		}
 		isSelected := actualCommitIdx == m.cursor
 
-		// Build the metadata portion.
 		meta := m.renderCommitMeta(row.Commit, metaWidth)
-
-		// Combine graph + metadata.
 		line := graphStr + "  " + meta
 
 		if isSelected {
@@ -431,38 +597,48 @@ func (m Model) renderGraphPane(width, height int) string {
 		}
 
 		lines = append(lines, line)
-		commitIdx++
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-// renderGraphCells converts a row's cells into a styled string.
 func (m Model) renderGraphCells(row graph.GraphRow, maxCols int) string {
 	var sb strings.Builder
 	for i := 0; i < maxCols; i++ {
 		if i > 0 {
-			sb.WriteRune(' ')
+			connectsRight := false
+			connectsLeft := false
+			if i-1 < len(row.Cells) {
+				c := row.Cells[i-1].Char
+				connectsRight = (c == '╰' || c == '╭' || c == '─' || c == '├' || c == '┼')
+			}
+			if i < len(row.Cells) {
+				c := row.Cells[i].Char
+				connectsLeft = (c == '╯' || c == '╮' || c == '─' || c == '┤' || c == '┼')
+			}
+			if connectsRight && connectsLeft {
+				colorIdx := 0
+				if i-1 < len(row.Cells) {
+					colorIdx = row.Cells[i-1].Color
+				}
+				style := lipgloss.NewStyle().Foreground(BranchColors[colorIdx%len(BranchColors)])
+				sb.WriteString(style.Render("─"))
+			} else {
+				sb.WriteRune(' ')
+			}
 		}
+
 		if i < len(row.Cells) {
 			cell := row.Cells[i]
 			charStr := string(cell.Char)
+			colorIdx := cell.Color % len(BranchColors)
+			style := lipgloss.NewStyle().Foreground(BranchColors[colorIdx])
+
 			switch cell.Char {
 			case '*':
-				colorIdx := cell.Color % len(BranchColors)
-				style := lipgloss.NewStyle().
-					Foreground(BranchColors[colorIdx]).
-					Bold(true)
+				style = style.Bold(true)
 				sb.WriteString(style.Render("●"))
-			case '│':
-				colorIdx := cell.Color % len(BranchColors)
-				style := lipgloss.NewStyle().
-					Foreground(BranchColors[colorIdx])
-				sb.WriteString(style.Render("│"))
-			case '/', '\\':
-				colorIdx := cell.Color % len(BranchColors)
-				style := lipgloss.NewStyle().
-					Foreground(BranchColors[colorIdx])
+			case '│', '─', '╭', '╮', '╯', '╰', '├', '┤', '┼':
 				sb.WriteString(style.Render(charStr))
 			default:
 				sb.WriteRune(' ')
@@ -474,11 +650,9 @@ func (m Model) renderGraphCells(row graph.GraphRow, maxCols int) string {
 	return sb.String()
 }
 
-// renderCommitMeta renders the inline commit metadata (refs, hash, subject, date).
 func (m Model) renderCommitMeta(c *git.Commit, width int) string {
 	var parts []string
 
-	// Render ref badges.
 	for _, ref := range c.Refs {
 		ref = strings.TrimSpace(ref)
 		if ref == "" {
@@ -493,16 +667,13 @@ func (m Model) renderCommitMeta(c *git.Commit, width int) string {
 		}
 	}
 
-	// Hash.
 	parts = append(parts, HashStyle.Render(c.ShortHash))
 
-	// Subject (truncated to fit).
 	subject := c.Subject
 	usedWidth := 0
 	for _, p := range parts {
 		usedWidth += lipgloss.Width(p) + 1
 	}
-	// Reserve space for date.
 	dateStr := c.RelDate
 	remaining := width - usedWidth - lipgloss.Width(dateStr) - 2
 	if remaining < 0 {
@@ -516,14 +687,11 @@ func (m Model) renderCommitMeta(c *git.Commit, width int) string {
 		}
 	}
 	parts = append(parts, SubjectStyle.Render(subject))
-
-	// Date (right-aligned effect via padding).
 	parts = append(parts, DateStyle.Render(dateStr))
 
 	return strings.Join(parts, " ")
 }
 
-// renderDetailPane renders the right-side detail pane for the selected commit.
 func (m Model) renderDetailPane(width, height int) string {
 	c := m.selectedCommit()
 	if c == nil {
@@ -532,16 +700,13 @@ func (m Model) renderDetailPane(width, height int) string {
 
 	var lines []string
 
-	// Title.
 	lines = append(lines, SectionHeaderStyle.Render("Commit Details"))
 	lines = append(lines, "")
 
-	// Metadata.
 	lines = append(lines, DetailLabelStyle.Render("Commit  ")+HashStyle.Render(c.Hash))
 	lines = append(lines, DetailLabelStyle.Render("Author  ")+AuthorStyle.Render(c.Author)+" "+DimStyle.Render("<"+c.Email+">"))
 	lines = append(lines, DetailLabelStyle.Render("Date    ")+DateStyle.Render(c.RelDate))
 
-	// Refs.
 	if len(c.Refs) > 0 {
 		var refBadges []string
 		for _, ref := range c.Refs {
@@ -560,7 +725,6 @@ func (m Model) renderDetailPane(width, height int) string {
 		lines = append(lines, DetailLabelStyle.Render("Refs    ")+strings.Join(refBadges, " "))
 	}
 
-	// Parents.
 	if len(c.Parents) > 0 {
 		parentStrs := make([]string, len(c.Parents))
 		for i, p := range c.Parents {
@@ -575,13 +739,11 @@ func (m Model) renderDetailPane(width, height int) string {
 
 	lines = append(lines, "")
 
-	// Subject & body.
 	lines = append(lines, SectionHeaderStyle.Render("Message"))
 	lines = append(lines, "")
 	lines = append(lines, SubjectStyle.Render(c.Subject))
 	if c.Body != "" {
 		lines = append(lines, "")
-		// Wrap body text.
 		bodyLines := strings.Split(c.Body, "\n")
 		for _, bl := range bodyLines {
 			if len(bl) > width {
@@ -591,7 +753,6 @@ func (m Model) renderDetailPane(width, height int) string {
 		}
 	}
 
-	// Changed files.
 	if len(m.files) > 0 && m.filesHash == c.Hash {
 		lines = append(lines, "")
 		lines = append(lines, SectionHeaderStyle.Render(fmt.Sprintf("Changed Files (%d)", len(m.files))))
@@ -632,11 +793,79 @@ func (m Model) renderDetailPane(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderHelpBar renders the bottom status/help bar.
+// renderDiffView renders the fullscreen, syntax-colored unified diff.
+func (m Model) renderDiffView() string {
+	if m.diffContent == "" {
+		return lipgloss.Place(
+			m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			DimStyle.Render("Loading diff…"),
+		)
+	}
+
+	diffLines := strings.Split(m.diffContent, "\n")
+	visibleHeight := m.height - 3 // reserve for title, header spacer, and help bar
+	if visibleHeight < 1 {
+		visibleHeight = 1
+	}
+
+	var rendered []string
+	c := m.selectedCommit()
+	title := fmt.Sprintf(" Diff for commit %s (Esc/Enter to return)", c.ShortHash)
+	rendered = append(rendered, SectionHeaderStyle.Render(title))
+	rendered = append(rendered, "")
+
+	endLine := m.diffScroll + visibleHeight
+	if endLine > len(diffLines) {
+		endLine = len(diffLines)
+	}
+
+	for i := m.diffScroll; i < endLine; i++ {
+		line := diffLines[i]
+		var styledLine string
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			styledLine = FileAddedStyle.Render(line)
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			styledLine = FileDeletedStyle.Render(line)
+		} else if strings.HasPrefix(line, "@@") {
+			styledLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#4FC3F7")).Render(line)
+		} else if strings.HasPrefix(line, "commit ") || strings.HasPrefix(line, "Author:") || strings.HasPrefix(line, "Date:") {
+			styledLine = HashStyle.Render(line)
+		} else {
+			styledLine = BodyStyle.Render(line)
+		}
+
+		if len(styledLine) > m.width {
+			styledLine = styledLine[:m.width]
+		}
+		rendered = append(rendered, styledLine)
+	}
+
+	// Pad remaining empty vertical space so layout remains stable
+	for len(rendered) < m.height-1 {
+		rendered = append(rendered, "")
+	}
+
+	rendered = append(rendered, m.renderHelpBar())
+	return strings.Join(rendered, "\n")
+}
+
 func (m Model) renderHelpBar() string {
 	var text string
 
-	if m.confirmCheckout {
+	if m.showDiff {
+		text = "  ↑/k Up  ↓/j Down  pgup/pgdn Scroll  enter/esc/q Close"
+	} else if m.searchMode {
+		text = "  Filter: " + m.searchQuery + "█ (esc Clear, enter Apply)"
+	} else if m.branchMode {
+		if m.branchSubMode == "" {
+			text = "  Branch Manager: [c] Create Branch  [d] Delete Branch  [esc] Cancel"
+		} else if m.branchSubMode == "create" {
+			text = "  Create Branch: " + m.branchInput + "█ (enter Confirm, esc Cancel)"
+		} else if m.branchSubMode == "delete" {
+			text = "  Delete Branch: " + m.branchInput + "█ (enter Confirm, esc Cancel)"
+		}
+	} else if m.confirmCheckout {
 		c := m.selectedCommit()
 		hash := "unknown"
 		if c != nil {
@@ -646,15 +875,47 @@ func (m Model) renderHelpBar() string {
 	} else if m.notification != "" {
 		text = m.notifyStyle.Render(m.notification)
 	} else {
-		text = HelpText()
+		text = "  ↑/k Up  ↓/j Down  g/G Top/Bottom  enter Diff  / Filter  b Branch  c Checkout  q Quit"
 	}
 
 	return HelpBarStyle.Width(m.width).Render(text)
 }
 
+// ─── Actions / Helpers ──────────────────────────────────────────────────────
+
+func (m Model) executeBranchAction() tea.Cmd {
+	c := m.selectedCommit()
+	if c == nil {
+		return nil
+	}
+	subMode := m.branchSubMode
+	input := m.branchInput
+
+	return func() tea.Msg {
+		var err error
+		var msg string
+		if subMode == "create" {
+			err = git.CreateBranch(input, c.Hash)
+			msg = fmt.Sprintf(" ✓ Created branch %s", input)
+		} else if subMode == "delete" {
+			err = git.DeleteBranch(input, false)
+			msg = fmt.Sprintf(" ✓ Deleted branch %s", input)
+		}
+
+		result := git.CheckoutResult{
+			Hash:    c.Hash,
+			Success: err == nil,
+			Message: msg,
+		}
+		if err != nil {
+			result.Message = err.Error()
+		}
+		return checkoutDoneMsg{result: result}
+	}
+}
+
 // ─── Commands ───────────────────────────────────────────────────────────────
 
-// parseCommitsCmd returns a tea.Cmd that parses the git log.
 func parseCommitsCmd() tea.Cmd {
 	return func() tea.Msg {
 		commits, err := git.ParseLog()
@@ -662,7 +923,6 @@ func parseCommitsCmd() tea.Cmd {
 	}
 }
 
-// loadFilesCmd returns a tea.Cmd that loads changed files for a commit.
 func loadFilesCmd(hash string) tea.Cmd {
 	return func() tea.Msg {
 		files, err := git.GetChangedFiles(hash)
@@ -670,7 +930,13 @@ func loadFilesCmd(hash string) tea.Cmd {
 	}
 }
 
-// checkoutCmd returns a tea.Cmd that runs git checkout.
+func loadDiffCmd(hash string) tea.Cmd {
+	return func() tea.Msg {
+		diff, err := git.GetCommitDiff(hash)
+		return diffLoadedMsg{hash: hash, diff: diff, err: err}
+	}
+}
+
 func checkoutCmd(hash string) tea.Cmd {
 	return func() tea.Msg {
 		result := git.Checkout(hash)
@@ -678,7 +944,6 @@ func checkoutCmd(hash string) tea.Cmd {
 	}
 }
 
-// clearNotifyAfter returns a tea.Cmd that clears the notification after a delay.
 func clearNotifyAfter(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return clearNotifyMsg{}

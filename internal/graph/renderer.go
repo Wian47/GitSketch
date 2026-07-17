@@ -6,34 +6,28 @@ import (
 	"gitsketch/internal/git"
 )
 
-// Cell represents a single character cell in the ASCII graph.
+// Cell represents a single character cell in the ASCII/Unicode graph.
 type Cell struct {
-	Char  rune // '*', '│', '/', '\\', '─', '·', ' '
+	Char  rune // '*', '│', '─', '╭', '╮', '╯', '╰', '├', '┤', '┼', ' '
 	Color int  // color index 0-7 for cycling branch colors
 }
 
-// GraphRow represents one rendered row of the ASCII graph,
-// containing the visual cells and a reference to the commit.
+// GraphRow represents one rendered row of the graph.
 type GraphRow struct {
 	Cells  []Cell      // individual cells making up the graph prefix
 	Commit *git.Commit // nil for connector/merge rows
 	Column int         // which column the commit node sits in (-1 for connector rows)
 }
 
-// BuildGraph converts a topologically-sorted commit list into an ASCII
-// branch visualization. It uses a column-lane assignment algorithm that
-// dynamically manages active lanes, handling branches, merges, and
-// octopus merges.
+// BuildGraph converts a topologically-sorted commit list into a beautiful
+// curved Unicode branch graph.
 func BuildGraph(commits []git.Commit) []GraphRow {
 	if len(commits) == 0 {
 		return nil
 	}
 
-	// columns tracks which commit hash is "expected" in each lane.
-	// An empty string means the lane is free.
+	// columns tracks which commit hash is expected in each lane.
 	var columns []string
-
-	// colorMap assigns a stable color to each lane.
 	colorMap := make(map[int]int)
 	nextColor := 0
 
@@ -42,9 +36,9 @@ func BuildGraph(commits []git.Commit) []GraphRow {
 	for i := range commits {
 		c := &commits[i]
 
-		// ── Step 1: Find this commit's column ──
+		// ── Step 1: Find commit column and merge sources ──
 		commitCol := -1
-		var mergeCols []int // columns where this commit also appears (merge convergence)
+		var mergeCols []int
 
 		for col, hash := range columns {
 			if hash == c.Hash {
@@ -56,7 +50,6 @@ func BuildGraph(commits []git.Commit) []GraphRow {
 			}
 		}
 
-		// If not found in any column, append a new one.
 		if commitCol == -1 {
 			commitCol = findFreeColumn(columns)
 			if commitCol == len(columns) {
@@ -66,30 +59,42 @@ func BuildGraph(commits []git.Commit) []GraphRow {
 			}
 		}
 
-		// Assign color to this column if not already assigned.
 		if _, ok := colorMap[commitCol]; !ok {
 			colorMap[commitCol] = nextColor % 8
 			nextColor++
 		}
 
-		// ── Step 2: Build the commit row ──
+		// ── Step 2: Render commit row with merge curves ──
 		numCols := len(columns)
 		cells := make([]Cell, numCols)
 
+		// Initialize default vertical lines or empty spaces
 		for col := 0; col < numCols; col++ {
-			if col == commitCol {
-				cells[col] = Cell{Char: '*', Color: colorMap[commitCol]}
-			} else if containsInt(mergeCols, col) {
-				// This column is converging into the commit (merge)
-				if col < commitCol {
-					cells[col] = Cell{Char: '/', Color: getColor(colorMap, col)}
-				} else {
-					cells[col] = Cell{Char: '\\', Color: getColor(colorMap, col)}
-				}
-			} else if columns[col] != "" {
+			if columns[col] != "" {
 				cells[col] = Cell{Char: '│', Color: getColor(colorMap, col)}
 			} else {
 				cells[col] = Cell{Char: ' ', Color: 0}
+			}
+		}
+
+		// Place the commit node
+		cells[commitCol] = Cell{Char: '*', Color: colorMap[commitCol]}
+
+		// Overlay merge curves leading to the commit node
+		for _, mc := range mergeCols {
+			color := getColor(colorMap, mc)
+			if mc < commitCol {
+				// Merging from left to right: starts at mc, goes right to commitCol
+				cells[mc] = Cell{Char: '╰', Color: color}
+				for col := mc + 1; col < commitCol; col++ {
+					cells[col] = Cell{Char: '─', Color: color}
+				}
+			} else {
+				// Merging from right to left: starts at mc, goes left to commitCol
+				cells[mc] = Cell{Char: '╯', Color: color}
+				for col := commitCol + 1; col < mc; col++ {
+					cells[col] = Cell{Char: '─', Color: color}
+				}
 			}
 		}
 
@@ -99,24 +104,25 @@ func BuildGraph(commits []git.Commit) []GraphRow {
 			Column: commitCol,
 		})
 
-		// ── Step 3: Free merge convergence columns ──
+		// ── Step 3: Free merge columns ──
 		for _, mc := range mergeCols {
 			columns[mc] = ""
 			delete(colorMap, mc)
 		}
 
-		// ── Step 4: Assign parents to columns ──
+		// ── Step 4: Handle branch forks (child to parent propagation) ──
+		var branchForks []int // columns of new branches being created in this step
+		oldCommitCol := commitCol
+
 		if len(c.Parents) == 0 {
-			// Root commit: free this column.
 			columns[commitCol] = ""
 			delete(colorMap, commitCol)
 		} else {
-			// First parent inherits this commit's column.
+			// First parent inherits current lane
 			columns[commitCol] = c.Parents[0]
 
-			// Additional parents (merge parents) get new/free columns.
+			// Additional parents get new/free lanes (branch out)
 			for _, parentHash := range c.Parents[1:] {
-				// Check if this parent is already expected somewhere.
 				alreadyAssigned := false
 				for _, h := range columns {
 					if h == parentHash {
@@ -131,60 +137,58 @@ func BuildGraph(commits []git.Commit) []GraphRow {
 					} else {
 						columns[freeCol] = parentHash
 					}
-					// Assign color to the new branch lane.
-					if _, ok := colorMap[freeCol]; !ok {
-						colorMap[freeCol] = nextColor % 8
-						nextColor++
-					}
+					colorMap[freeCol] = nextColor % 8
+					nextColor++
+					branchForks = append(branchForks, freeCol)
 				}
 			}
 		}
 
-		// ── Step 5: Generate connector rows for visual clarity ──
-		// If merge columns were freed, we may need a connector row
-		// showing the diagonal lines converging.
-		if len(mergeCols) > 0 {
-			connCells := buildConnectorRow(columns, commitCol, mergeCols, colorMap)
-			if connCells != nil {
-				rows = append(rows, GraphRow{
-					Cells:  trimTrailingEmpty(connCells),
-					Commit: nil,
-					Column: -1,
-				})
+		// ── Step 5: Render connector row for branch forks ──
+		if len(branchForks) > 0 {
+			connCells := make([]Cell, len(columns))
+			for col := 0; col < len(columns); col++ {
+				if col < len(cells) && cells[col].Char == '│' && columns[col] != "" {
+					connCells[col] = Cell{Char: '│', Color: getColor(colorMap, col)}
+				} else {
+					connCells[col] = Cell{Char: ' ', Color: 0}
+				}
 			}
+
+			// Main parent line continues down
+			connCells[oldCommitCol] = Cell{Char: '│', Color: getColor(colorMap, oldCommitCol)}
+
+			// Render branching lines from oldCommitCol to each fork destination
+			for _, fc := range branchForks {
+				color := getColor(colorMap, fc)
+				if fc > oldCommitCol {
+					// Branching to the right: connects main line to the right
+					connCells[oldCommitCol] = Cell{Char: '├', Color: getColor(colorMap, oldCommitCol)}
+					for col := oldCommitCol + 1; col < fc; col++ {
+						connCells[col] = Cell{Char: '─', Color: color}
+					}
+					connCells[fc] = Cell{Char: '╮', Color: color}
+				} else {
+					// Branching to the left: connects main line to the left
+					connCells[oldCommitCol] = Cell{Char: '┤', Color: getColor(colorMap, oldCommitCol)}
+					for col := fc + 1; col < oldCommitCol; col++ {
+						connCells[col] = Cell{Char: '─', Color: color}
+					}
+					connCells[fc] = Cell{Char: '╭', Color: color}
+				}
+			}
+
+			rows = append(rows, GraphRow{
+				Cells:  trimTrailingEmpty(connCells),
+				Commit: nil,
+				Column: -1,
+			})
 		}
 
-		// Compact trailing empty columns.
 		columns = trimTrailingEmptyStr(columns)
 	}
 
 	return rows
-}
-
-// buildConnectorRow generates an optional connector row showing
-// the visual lines after a merge commit.
-func buildConnectorRow(columns []string, commitCol int, mergeCols []int, colorMap map[int]int) []Cell {
-	numCols := len(columns)
-	if numCols == 0 {
-		return nil
-	}
-
-	cells := make([]Cell, numCols)
-	hasContent := false
-
-	for col := 0; col < numCols; col++ {
-		if columns[col] != "" {
-			cells[col] = Cell{Char: '│', Color: getColor(colorMap, col)}
-			hasContent = true
-		} else {
-			cells[col] = Cell{Char: ' ', Color: 0}
-		}
-	}
-
-	if !hasContent {
-		return nil
-	}
-	return cells
 }
 
 // MaxColumns returns the maximum number of cells across all rows.
@@ -198,7 +202,7 @@ func MaxColumns(rows []GraphRow) int {
 	return max
 }
 
-// RenderRow converts a GraphRow's cells into a plain string for debugging.
+// RenderRow converts a GraphRow's cells into a plain string.
 func RenderRow(row GraphRow) string {
 	var sb strings.Builder
 	for i, cell := range row.Cells {
@@ -210,10 +214,7 @@ func RenderRow(row GraphRow) string {
 	return sb.String()
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-// findFreeColumn returns the index of the first empty column,
-// or len(columns) if none are free (meaning a new column should be appended).
+// findFreeColumn returns the first empty slot.
 func findFreeColumn(columns []string) int {
 	for i, h := range columns {
 		if h == "" {
@@ -223,17 +224,6 @@ func findFreeColumn(columns []string) int {
 	return len(columns)
 }
 
-// containsInt checks if a slice contains a given integer.
-func containsInt(s []int, v int) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-// getColor retrieves the color for a column, defaulting to 0.
 func getColor(colorMap map[int]int, col int) int {
 	if c, ok := colorMap[col]; ok {
 		return c
@@ -241,19 +231,17 @@ func getColor(colorMap map[int]int, col int) int {
 	return 0
 }
 
-// trimTrailingEmpty removes trailing space cells from a cell slice.
 func trimTrailingEmpty(cells []Cell) []Cell {
 	end := len(cells)
 	for end > 0 && cells[end-1].Char == ' ' {
 		end--
 	}
 	if end == 0 {
-		return cells[:1] // keep at least one cell
+		return cells[:1]
 	}
 	return cells[:end]
 }
 
-// trimTrailingEmptyStr removes trailing empty strings from a string slice.
 func trimTrailingEmptyStr(s []string) []string {
 	end := len(s)
 	for end > 0 && s[end-1] == "" {
