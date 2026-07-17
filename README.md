@@ -84,7 +84,3 @@ internal/tui/keys.go       → Hotkey declarations & templates
 ```
 
 ---
-
-## License
-
-MIT
