@@ -20,6 +20,12 @@ Built with Go + [Bubbletea v2](https://charm.land/bubbletea/v2) / [Lipgloss v2](
 
 ## Installation
 
+### 1-Command Installer (Recommended)
+Run the following command to download, select the package for your OS/Arch, and install GitSketch automatically:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Wian47/GitSketch/master/install.sh | sh
+```
+
 ### Globally via Go
 To install `gitsketch` globally into your `$GOPATH/bin`:
 ```bash
