@@ -684,3 +684,4 @@ func clearNotifyAfter(d time.Duration) tea.Cmd {
 		return clearNotifyMsg{}
 	})
 }
+// TODO: implement search filter
