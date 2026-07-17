@@ -3,7 +3,7 @@ package graph
 import (
 	"strings"
 
-	"gitsketch/internal/git"
+	"github.com/Wian47/GitSketch/internal/git"
 )
 
 // Cell represents a single character cell in the ASCII/Unicode graph.

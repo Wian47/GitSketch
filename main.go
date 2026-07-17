@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"gitsketch/internal/git"
-	"gitsketch/internal/tui"
+	"github.com/Wian47/GitSketch/internal/git"
+	"github.com/Wian47/GitSketch/internal/tui"
 )
 
 func main() {

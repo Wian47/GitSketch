@@ -8,8 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"gitsketch/internal/git"
-	"gitsketch/internal/graph"
+	"github.com/Wian47/GitSketch/internal/git"
+	"github.com/Wian47/GitSketch/internal/graph"
 )
 
 // ─── Messages ───────────────────────────────────────────────────────────────

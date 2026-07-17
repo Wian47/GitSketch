@@ -21,22 +21,25 @@ Built with Go + [Bubbletea v2](https://charm.land/bubbletea/v2) / [Lipgloss v2](
 ## Installation
 
 ### 1-Command Installer (Recommended)
-Since this is a **private repository**, you must authenticate using your GitHub Personal Access Token (PAT). Pass your token as a header to curl and as an environment variable to the script:
+To download, select the package for your OS/Arch, and install GitSketch automatically:
 ```bash
-curl -fsSL -H "Authorization: token <YOUR_GITHUB_TOKEN>" https://raw.githubusercontent.com/Wian47/GitSketch/master/install.sh | GITHUB_TOKEN=<YOUR_GITHUB_TOKEN> sh
+curl -fsSL https://raw.githubusercontent.com/Wian47/GitSketch/master/install.sh | sh
 ```
 
-### Build & Install from Source
-To compile and install directly from your local source directory:
+### Via Go Package Registry
+If you have Go installed, you can install the binary directly from GitHub:
 ```bash
-# Clone the repository
-git clone https://github.com/Wian47/GitSketch.git
-cd GitSketch
-
-# Build and install globally to your Go binary path
-go install .
+go install github.com/Wian47/GitSketch@latest
 ```
 *(Make sure your Go binary path, usually `~/go/bin`, is in your system `$PATH`)*
+
+### Build from Source
+To compile and install from a local clone:
+```bash
+git clone https://github.com/Wian47/GitSketch.git
+cd GitSketch
+go install .
+```
 
 
 ---
