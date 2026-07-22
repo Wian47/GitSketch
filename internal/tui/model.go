@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 	"github.com/Wian47/GitSketch/internal/git"
 	"github.com/Wian47/GitSketch/internal/graph"
 )
+
+// filterDebounceDelay controls how long to wait after the last keystroke in
+// the filter box before recomputing the filtered commit list and graph. This
+// avoids rebuilding the entire graph on every keypress for large histories.
+const filterDebounceDelay = 120 * time.Millisecond
 
 // ─── Messages ───────────────────────────────────────────────────────────────
 
@@ -37,6 +43,8 @@ type checkoutDoneMsg struct {
 
 type clearNotifyMsg struct{}
 
+type filterDebounceMsg struct{ gen int }
+
 // ─── Model ──────────────────────────────────────────────────────────────────
 
 // Model holds the entire application state for the Bubbletea program.
@@ -56,6 +64,12 @@ type Model struct {
 	// Search / Filter State
 	searchMode  bool
 	searchQuery string
+	filterGen   int // incremented per keystroke; guards debounced recompute
+
+	// historyLoaded tracks whether the initial commit load has completed, so
+	// later refreshes (after checkout/branch actions) can preserve cursor
+	// position instead of resetting to the top every time.
+	historyLoaded bool
 
 	// Branch Manager State
 	branchMode    bool
@@ -113,8 +127,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.allCommits = msg.commits
 		m.applyFilter()
-		m.cursor = 0
-		m.scrollOff = 0
+		// Only reset the cursor to the top on the very first load. Checkout
+		// and branch actions re-parse the log to refresh ref decorations,
+		// but don't change commit order/count, so keep the cursor where the
+		// user left it instead of jumping back to the top each time.
+		if !m.historyLoaded {
+			m.cursor = 0
+			m.scrollOff = 0
+			m.historyLoaded = true
+		}
 		// Load files for the first commit.
 		if len(m.graphRows) > 0 {
 			if c := m.selectedCommit(); c != nil {
@@ -156,6 +177,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clearNotifyMsg:
 		m.notification = ""
+		return m, nil
+
+	case filterDebounceMsg:
+		if msg.gen == m.filterGen {
+			m.applyFilter()
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -243,25 +270,31 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case KeyEsc:
 			m.searchMode = false
 			m.searchQuery = ""
+			m.filterGen++ // invalidate any pending debounced recompute
 			m.applyFilter()
 			return m, nil
 		case KeyEnter:
 			m.searchMode = false
+			m.filterGen++ // invalidate any pending debounced recompute
+			m.applyFilter()
 			return m, nil
 		case "backspace":
 			if len(m.searchQuery) > 0 {
 				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
-				m.applyFilter()
+				m.filterGen++
+				return m, filterDebounceCmd(m.filterGen)
 			}
 			return m, nil
 		default:
 			// Capture printable characters
 			if len(key) == 1 {
 				m.searchQuery += key
-				m.applyFilter()
+				m.filterGen++
+				return m, filterDebounceCmd(m.filterGen)
 			} else if key == "space" {
 				m.searchQuery += " "
-				m.applyFilter()
+				m.filterGen++
+				return m, filterDebounceCmd(m.filterGen)
 			}
 			return m, nil
 		}
@@ -401,16 +434,13 @@ func (m *Model) applyFilter() {
 		m.filteredCommits = m.allCommits
 	} else {
 		m.filteredCommits = nil
-		query := strings.ToLower(m.searchQuery)
+		matches := filterMatcher(m.searchQuery)
 		for _, c := range m.allCommits {
-			match := strings.Contains(strings.ToLower(c.Hash), query) ||
-				strings.Contains(strings.ToLower(c.Subject), query) ||
-				strings.Contains(strings.ToLower(c.Author), query) ||
-				strings.Contains(strings.ToLower(c.Body), query)
+			match := matches(c.Hash) || matches(c.Subject) || matches(c.Author) || matches(c.Body)
 
 			if !match {
 				for _, r := range c.Refs {
-					if strings.Contains(strings.ToLower(r), query) {
+					if matches(r) {
 						match = true
 						break
 					}
@@ -432,6 +462,20 @@ func (m *Model) applyFilter() {
 		m.cursor = 0
 	}
 	m.adjustScroll()
+}
+
+// filterMatcher compiles the query as a case-insensitive regular expression
+// and returns a matcher function. If the query isn't a valid regex (e.g. an
+// unbalanced "(" typed mid-pattern), it falls back to a plain case-insensitive
+// substring match so the filter never goes "dead" while the user is typing.
+func filterMatcher(query string) func(string) bool {
+	if re, err := regexp.Compile("(?i)" + query); err == nil {
+		return re.MatchString
+	}
+	lowerQuery := strings.ToLower(query)
+	return func(s string) bool {
+		return strings.Contains(strings.ToLower(s), lowerQuery)
+	}
 }
 
 // ─── Cursor & Scroll ────────────────────────────────────────────────────────
@@ -947,5 +991,15 @@ func checkoutCmd(hash string) tea.Cmd {
 func clearNotifyAfter(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return clearNotifyMsg{}
+	})
+}
+
+// filterDebounceCmd schedules a filter recompute after filterDebounceDelay,
+// tagged with the generation active at the time of the keystroke. If more
+// keystrokes arrive before it fires, the model's filterGen will have moved
+// on and the stale tick is ignored (see the filterDebounceMsg case in Update).
+func filterDebounceCmd(gen int) tea.Cmd {
+	return tea.Tick(filterDebounceDelay, func(t time.Time) tea.Msg {
+		return filterDebounceMsg{gen: gen}
 	})
 }
