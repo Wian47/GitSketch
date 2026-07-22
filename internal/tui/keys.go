@@ -8,19 +8,19 @@ const (
 	KeyDown   = "down"
 	KeyK      = "k"
 	KeyJ      = "j"
-	KeyG      = "g"       // jump to top
-	KeyShiftG = "G"       // jump to bottom
+	KeyG      = "g" // jump to top
+	KeyShiftG = "G" // jump to bottom
 	KeyHome   = "home"
 	KeyEnd    = "end"
 	KeyPgUp   = "pgup"
 	KeyPgDown = "pgdown"
 	KeyEnter  = "enter"
-	KeyC      = "c"       // checkout
-	KeyY      = "y"       // confirm
-	KeyN      = "n"       // cancel
+	KeyC      = "c" // checkout
+	KeyY      = "y" // confirm
+	KeyN      = "n" // cancel
 	KeyEsc    = "escape"
-	KeyQ      = "q"       // quit
-	KeyCtrlC  = "ctrl+c"  // quit
+	KeyQ      = "q"      // quit
+	KeyCtrlC  = "ctrl+c" // quit
 )
 
 // HelpText returns the formatted help bar text

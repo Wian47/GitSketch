@@ -576,16 +576,16 @@ func (m Model) renderLayout() string {
 	rightContent := m.renderDetailPane(rightWidth-4, paneHeight-2)
 
 	leftPane := lipgloss.NewStyle().
-		Width(leftWidth - 2).
-		Height(paneHeight - 2).
+		Width(leftWidth-2).
+		Height(paneHeight-2).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(PaneBorderColor).
 		Padding(0, 1).
 		Render(leftContent)
 
 	rightPane := lipgloss.NewStyle().
-		Width(rightWidth - 2).
-		Height(paneHeight - 2).
+		Width(rightWidth-2).
+		Height(paneHeight-2).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(PaneBorderColor).
 		Padding(0, 1).
