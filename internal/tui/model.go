@@ -41,6 +41,10 @@ type checkoutDoneMsg struct {
 	result git.CheckoutResult
 }
 
+type commitDoneMsg struct {
+	result git.CommitResult
+}
+
 type statusLoadedMsg struct {
 	status git.Status
 	err    error
@@ -110,6 +114,8 @@ type Model struct {
 	confirmDiscard  bool   // showing discard-changes confirmation for the focused working-tree file
 	notification    string // transient status message
 	notifyStyle     lipgloss.Style
+	commitInputMode bool
+	commitMessage   string
 
 	// Loading
 	loading    bool
@@ -212,6 +218,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notifyStyle = NotifyErrorStyle
 		}
 		// Refresh the DAG and clear notification after delay.
+		return m, tea.Batch(
+			parseCommitsCmd(),
+			loadStatusCmd(),
+			clearNotifyAfter(3*time.Second),
+		)
+
+	case commitDoneMsg:
+		if msg.result.Success {
+			text := msg.result.Message
+			if text == "" {
+				text = "Committed"
+			}
+			m.notification = " ✓ " + text
+			m.notifyStyle = NotifySuccessStyle
+		} else {
+			m.notification = fmt.Sprintf(" ✗ %s", msg.result.Message)
+			m.notifyStyle = NotifyErrorStyle
+		}
 		return m, tea.Batch(
 			parseCommitsCmd(),
 			loadStatusCmd(),
@@ -417,6 +441,36 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// ── Mode: Commit Message Input ──
+	if m.commitInputMode {
+		switch key {
+		case KeyEsc:
+			m.commitInputMode = false
+			m.commitMessage = ""
+			return m, nil
+		case KeyEnter:
+			if m.commitMessage == "" {
+				return m, nil
+			}
+			msg := m.commitMessage
+			m.commitInputMode = false
+			m.commitMessage = ""
+			return m, commitCmd(msg)
+		case "backspace":
+			if len(m.commitMessage) > 0 {
+				m.commitMessage = m.commitMessage[:len(m.commitMessage)-1]
+			}
+			return m, nil
+		default:
+			if len(key) == 1 {
+				m.commitMessage += key
+			} else if key == "space" {
+				m.commitMessage += " "
+			}
+			return m, nil
+		}
+	}
+
 	// ── Mode: Checkout Confirmation ──
 	if m.confirmCheckout {
 		switch key {
@@ -484,6 +538,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadFilesIfNeeded()
 
 	case KeyC:
+		if m.wtSelected {
+			if m.dirtyStaged == 0 {
+				return m, nil
+			}
+			m.commitInputMode = true
+			m.commitMessage = ""
+			return m, nil
+		}
 		c := m.selectedCommit()
 		if c != nil {
 			m.confirmCheckout = true
@@ -1181,6 +1243,8 @@ func (m Model) renderHelpBar() string {
 		} else if m.branchSubMode == "delete" {
 			text = "  Delete Branch: " + m.branchInput + "█ (enter Confirm, esc Cancel)"
 		}
+	} else if m.commitInputMode {
+		text = "  Commit message: " + m.commitMessage + "█ (enter Commit, esc Cancel)"
 	} else if m.confirmCheckout {
 		c := m.selectedCommit()
 		hash := "unknown"
@@ -1286,6 +1350,12 @@ func unstageFileCmd(path string) tea.Cmd {
 func discardFileCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		return stagingDoneMsg{action: "discarded", path: path, err: git.DiscardFile(path)}
+	}
+}
+
+func commitCmd(message string) tea.Cmd {
+	return func() tea.Msg {
+		return commitDoneMsg{result: git.CreateCommit(message)}
 	}
 }
 

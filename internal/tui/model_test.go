@@ -408,3 +408,70 @@ func TestHandleKeyDiscardOnlyPromptsForUnstagedFile(t *testing.T) {
 		t.Fatal("expected discard to prompt for an unstaged file")
 	}
 }
+
+func TestHandleKeyCommitOpensInputOnlyWithStagedChanges(t *testing.T) {
+	m := Model{wtSelected: true, dirtyStaged: 0}
+	updated, _ := m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	mm := updated.(Model)
+	if mm.commitInputMode {
+		t.Fatal("expected commit input to not open with nothing staged")
+	}
+
+	m = Model{wtSelected: true, dirtyStaged: 1}
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	mm = updated.(Model)
+	if !mm.commitInputMode {
+		t.Fatal("expected commit input to open with something staged")
+	}
+}
+
+func TestHandleKeyCommitInputCapturesTextAndSubmits(t *testing.T) {
+	m := Model{commitInputMode: true, commitMessage: "fix bu"}
+	updated, _ := m.handleKey(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	mm := updated.(Model)
+	if mm.commitMessage != "fix bug" {
+		t.Fatalf("expected commitMessage %q, got %q", "fix bug", mm.commitMessage)
+	}
+
+	updated, cmd := mm.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm = updated.(Model)
+	if mm.commitInputMode {
+		t.Fatal("expected commit input mode to close on submit")
+	}
+	if cmd == nil {
+		t.Fatal("expected a commit command to be returned on submit")
+	}
+}
+
+func TestHandleKeyCommitInputEmptyMessageDoesNotSubmit(t *testing.T) {
+	m := Model{commitInputMode: true, commitMessage: ""}
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm := updated.(Model)
+	if !mm.commitInputMode {
+		t.Fatal("expected commit input mode to stay open when message is empty")
+	}
+	if cmd != nil {
+		t.Fatal("expected no command when submitting an empty commit message")
+	}
+}
+
+func TestUpdateCommitDoneMsgSuccess(t *testing.T) {
+	m := Model{}
+	updated, cmd := m.Update(commitDoneMsg{result: git.CommitResult{Success: true, Message: "1 file changed"}})
+	mm := updated.(Model)
+	if !reflect.DeepEqual(mm.notifyStyle, NotifySuccessStyle) {
+		t.Fatal("expected success notify style")
+	}
+	if cmd == nil {
+		t.Fatal("expected a refresh command to be returned")
+	}
+}
+
+func TestUpdateCommitDoneMsgFailure(t *testing.T) {
+	m := Model{}
+	updated, _ := m.Update(commitDoneMsg{result: git.CommitResult{Success: false, Message: "nothing to commit"}})
+	mm := updated.(Model)
+	if !reflect.DeepEqual(mm.notifyStyle, NotifyErrorStyle) {
+		t.Fatal("expected error notify style")
+	}
+}
