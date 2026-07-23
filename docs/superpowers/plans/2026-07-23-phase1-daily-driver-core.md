@@ -686,9 +686,9 @@ git commit -m "feat: add whole-file and hunk-level staging operations"
 - Test: `internal/git/commit_test.go`
 
 **Interfaces:**
-- Produces: `type CommitResult struct { Success bool; Message string }`, `func Commit(message string) CommitResult`
+- Produces: `type CommitResult struct { Success bool; Message string }`, `func CreateCommit(message string) CommitResult`
 
-Mirrors `Checkout`'s existing shape in `commands.go` exactly (same `CombinedOutput`/trim/`Success` pattern) so the TUI layer (Task 12) can reuse the same `checkoutDoneMsg`-style handling.
+Mirrors `Checkout`'s existing shape in `commands.go` exactly (same `CombinedOutput`/trim/`Success` pattern) so the TUI layer (Task 12) can reuse the same `checkoutDoneMsg`-style handling. Named `CreateCommit` (not `Commit`) because `internal/git/parser.go` already defines `type Commit struct` (the DAG commit type used throughout `internal/tui` and `internal/graph`) — Go doesn't allow a function and a type to share a name in the same package, and matching the existing `CreateBranch`/`DeleteBranch` naming convention was the natural fix.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -712,7 +712,7 @@ func TestCommitSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Commit("second commit")
+	result := CreateCommit("second commit")
 	if !result.Success {
 		t.Fatalf("expected commit to succeed, got message: %q", result.Message)
 	}
@@ -727,7 +727,7 @@ func TestCommitNothingStagedFails(t *testing.T) {
 	initTestRepo(t)
 	writeAndCommit(t, "a.txt", "one", "first commit")
 
-	result := Commit("empty commit attempt")
+	result := CreateCommit("empty commit attempt")
 	if result.Success {
 		t.Fatal("expected commit with nothing staged to fail")
 	}
@@ -740,7 +740,7 @@ func TestCommitNothingStagedFails(t *testing.T) {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `go test ./internal/git/... -run TestCommit -v`
-Expected: FAIL with `undefined: Commit` (compile error)
+Expected: FAIL with `undefined: CreateCommit` (compile error)
 
 - [ ] **Step 3: Implement**
 
@@ -759,9 +759,9 @@ type CommitResult struct {
 	Message string
 }
 
-// Commit runs "git commit -m <message>" against whatever is currently
+// CreateCommit runs "git commit -m <message>" against whatever is currently
 // staged and returns a CommitResult describing whether it succeeded.
-func Commit(message string) CommitResult {
+func CreateCommit(message string) CommitResult {
 	cmd := exec.Command("git", "commit", "-m", message)
 	output, err := cmd.CombinedOutput()
 	msg := strings.TrimSpace(string(output))
@@ -2787,7 +2787,7 @@ git commit -m "feat: add whole-file stage/unstage/discard actions"
 - Test: additions to `internal/tui/model_test.go`
 
 **Interfaces:**
-- Consumes: `git.Commit(message string) git.CommitResult` (Task 4)
+- Consumes: `git.CreateCommit(message string) git.CommitResult` (Task 4)
 - Produces: `Model` fields `commitInputMode bool`, `commitMessage string`; `commitDoneMsg{result git.CommitResult}`; `func commitCmd(message string) tea.Cmd`
 
 Reuses the existing `KeyC` binding: when the working-tree row is focused, `c` means "commit staged changes" instead of "checkout" (checkout only ever fires when `selectedCommit() != nil`, which is already `nil` while `m.wtSelected` — see Task 10 — so this is a safe, contextual reuse rather than a new binding).
@@ -2887,7 +2887,7 @@ type commitDoneMsg struct {
 
 func commitCmd(message string) tea.Cmd {
 	return func() tea.Msg {
-		return commitDoneMsg{result: git.Commit(message)}
+		return commitDoneMsg{result: git.CreateCommit(message)}
 	}
 }
 ```
