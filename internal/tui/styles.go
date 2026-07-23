@@ -100,7 +100,7 @@ func init() {
 // once at startup with the built-in defaults (via init), and again with the
 // user's loaded config if they've customized any colors.
 func ApplyTheme(t config.Theme) {
-	BranchColors = BranchColors[:0]
+	BranchColors = nil
 	for _, hex := range t.BranchColors {
 		BranchColors = append(BranchColors, lipgloss.Color(hex))
 	}

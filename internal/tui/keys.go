@@ -26,7 +26,7 @@ var (
 	KeyC      = "c" // checkout
 	KeyY      = "y" // confirm
 	KeyN      = "n" // cancel
-	KeyEsc    = "escape"
+	KeyEsc    = "esc"
 	KeyQ      = "q"      // quit
 	KeyCtrlC  = "ctrl+c" // quit
 	KeyFilter = "/"

@@ -102,6 +102,7 @@ type Model struct {
 	stagingFileHeader string
 	stagingHunks      []git.Hunk
 	stagingHunkCursor int
+	stagingScroll     int // first visible line within the rendered hunk body, kept in sync with stagingHunkCursor
 	stagingFilePath   string
 	stagingFileStaged bool // whether the currently-open diff is the staged or unstaged view of stagingFilePath
 
@@ -231,14 +232,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stagingDiffLoadedMsg:
 		if msg.err != nil {
-			m.diffContent = fmt.Sprintf("Error loading diff: %v", msg.err)
-			return m, nil
+			m.notification = fmt.Sprintf(" ✗ Error loading diff: %v", msg.err)
+			m.notifyStyle = NotifyErrorStyle
+			return m, clearNotifyAfter(3 * time.Second)
 		}
 		m.stagingFileHeader = msg.header
 		m.stagingHunks = msg.hunks
 		if m.stagingHunkCursor >= len(m.stagingHunks) {
 			m.stagingHunkCursor = 0
 		}
+		m.adjustStagingScroll()
 		return m, nil
 
 	case hunkStagingDoneMsg:
@@ -383,23 +386,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if m.stagingHunkCursor > 0 {
 					m.stagingHunkCursor--
 				}
+				m.adjustStagingScroll()
 				return m, nil
 			case KeyDown, KeyJ:
 				if m.stagingHunkCursor < len(m.stagingHunks)-1 {
 					m.stagingHunkCursor++
 				}
+				m.adjustStagingScroll()
 				return m, nil
 			case "space":
 				return m, m.toggleSelectedHunk()
-			}
-			// msg.String() renders the escape key's Code as "esc", not
-			// "escape" (KeyEsc), so fall back to checking the raw code —
-			// mirrors the same workaround in the Help Overlay branch above.
-			if msg.Code == tea.KeyEscape {
-				m.showDiff = false
-				m.stagingDiffMode = false
-				m.stagingHunks = nil
-				return m, nil
 			}
 			return m, nil
 		}
@@ -433,10 +429,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.helpMode {
 		switch key {
 		case KeyEsc, KeyHelp, KeyQ:
-			m.helpMode = false
-			return m, nil
-		}
-		if msg.Code == tea.KeyEscape {
 			m.helpMode = false
 			return m, nil
 		}
@@ -626,7 +618,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case KeyC:
 		if m.wtSelected {
 			if m.dirtyStaged == 0 {
-				return m, nil
+				m.notification = " ✗ Nothing staged to commit"
+				m.notifyStyle = NotifyErrorStyle
+				return m, clearNotifyAfter(3 * time.Second)
 			}
 			m.commitInputMode = true
 			m.commitMessage = ""
@@ -817,7 +811,53 @@ func (m *Model) openStagingDiff() tea.Cmd {
 	m.stagingFilePath = ref.entry.Path
 	m.stagingFileStaged = ref.staged
 	m.stagingHunkCursor = 0
+	m.stagingScroll = 0
 	return loadStagingDiffCmd(ref.entry.Path, ref.staged)
+}
+
+// stagingHunkLineRanges returns the [start, end) line range each hunk in
+// m.stagingHunks occupies within the rendered hunk body (the content area
+// of renderStagingDiffView, before its title/spacer lines).
+func (m Model) stagingHunkLineRanges() []struct{ start, end int } {
+	ranges := make([]struct{ start, end int }, len(m.stagingHunks))
+	pos := 0
+	for i, h := range m.stagingHunks {
+		ranges[i].start = pos
+		pos += len(h.Lines)
+		ranges[i].end = pos
+	}
+	return ranges
+}
+
+// stagingViewportHeight returns the number of hunk-body lines visible at
+// once in the fullscreen staging diff view (mirrors renderDiffView's
+// visibleHeight: reserves rows for the title, spacer, and help bar).
+func (m Model) stagingViewportHeight() int {
+	h := m.height - 3
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// adjustStagingScroll keeps the hunk under stagingHunkCursor within the
+// visible scroll window, nudging stagingScroll only as far as needed.
+func (m *Model) adjustStagingScroll() {
+	ranges := m.stagingHunkLineRanges()
+	if m.stagingHunkCursor < 0 || m.stagingHunkCursor >= len(ranges) {
+		return
+	}
+	viewport := m.stagingViewportHeight()
+	r := ranges[m.stagingHunkCursor]
+	if r.start < m.stagingScroll {
+		m.stagingScroll = r.start
+	}
+	if r.end > m.stagingScroll+viewport {
+		m.stagingScroll = r.end - viewport
+	}
+	if m.stagingScroll < 0 {
+		m.stagingScroll = 0
+	}
 }
 
 // toggleSelectedHunk stages the hunk under the cursor if we're viewing the
@@ -1365,11 +1405,7 @@ func (m Model) renderStagingDiffView() string {
 		)
 	}
 
-	var rendered []string
-	title := fmt.Sprintf(" %s (esc to return, space to stage/unstage hunk)", m.stagingFilePath)
-	rendered = append(rendered, SectionHeaderStyle.Render(title))
-	rendered = append(rendered, "")
-
+	var body []string
 	for i, h := range m.stagingHunks {
 		for _, l := range h.Lines {
 			var styled string
@@ -1386,9 +1422,25 @@ func (m Model) renderStagingDiffView() string {
 			if i == m.stagingHunkCursor {
 				styled = SelectedRowStyle.Width(m.width).Render(styled)
 			}
-			rendered = append(rendered, styled)
+			body = append(body, styled)
 		}
 	}
+
+	viewport := m.stagingViewportHeight()
+	scroll := m.stagingScroll
+	if scroll > len(body) {
+		scroll = len(body)
+	}
+	endLine := scroll + viewport
+	if endLine > len(body) {
+		endLine = len(body)
+	}
+
+	var rendered []string
+	title := fmt.Sprintf(" %s (esc to return, space to stage/unstage hunk)", m.stagingFilePath)
+	rendered = append(rendered, SectionHeaderStyle.Render(title))
+	rendered = append(rendered, "")
+	rendered = append(rendered, body[scroll:endLine]...)
 
 	for len(rendered) < m.height-1 {
 		rendered = append(rendered, "")
@@ -1428,7 +1480,7 @@ func (m Model) renderHelpBar() string {
 	} else if m.notification != "" {
 		text = m.notifyStyle.Render(m.notification)
 	} else if m.wtSelected {
-		text = fmt.Sprintf("  ↑/k ↓/j Files  %s Stage  %s Unstage  %s Discard  q Quit", KeyStageFile, KeyUnstageFile, KeyDiscard)
+		text = fmt.Sprintf("  ↑/k ↓/j Files  %s Stage  %s Unstage  %s Discard  enter Hunk-stage  c Commit  q Quit", KeyStageFile, KeyUnstageFile, KeyDiscard)
 	} else {
 		text = "  ↑/k Up  ↓/j Down  g/G Top/Bottom  enter Diff  / Filter  b Branch  c Checkout  q Quit"
 	}
