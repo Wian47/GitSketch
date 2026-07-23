@@ -2268,7 +2268,7 @@ func (m *Model) moveCursor(delta int) {
 	if total == 0 {
 		return
 	}
-	if m.cursor == 0 && delta < 0 {
+	if m.cursor == 0 && delta == -1 {
 		m.wtSelected = true
 		m.wtFileCursor = 0
 		m.adjustScroll()
