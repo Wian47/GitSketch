@@ -81,6 +81,7 @@ type Model struct {
 	scrollOff int // vertical scroll offset for the graph pane
 	width     int // terminal width
 	height    int // terminal height
+	helpMode  bool // showing the full keybinding help overlay
 
 	// Mode
 	confirmCheckout bool   // showing checkout confirmation dialog
@@ -214,6 +215,8 @@ func (m Model) View() tea.View {
 			lipgloss.Center, lipgloss.Center,
 			DimStyle.Render(m.loadingMsg),
 		)
+	} else if m.helpMode {
+		content = m.renderHelpOverlay()
 	} else if m.showDiff {
 		content = m.renderDiffView()
 	} else if len(m.graphRows) == 0 {
@@ -259,6 +262,20 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case KeyPgDown:
 			m.diffScroll += m.height - 4
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// ── Mode: Help Overlay ──
+	if m.helpMode {
+		switch key {
+		case KeyEsc, KeyHelp, KeyQ:
+			m.helpMode = false
+			return m, nil
+		}
+		if msg.Code == tea.KeyEscape {
+			m.helpMode = false
 			return m, nil
 		}
 		return m, nil
@@ -411,6 +428,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case KeyBranch:
 		m.branchMode = true
 		m.branchSubMode = ""
+		return m, nil
+
+	case KeyHelp:
+		m.helpMode = true
 		return m, nil
 
 	case KeyEnter:

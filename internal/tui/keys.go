@@ -31,6 +31,7 @@ var (
 	KeyCtrlC  = "ctrl+c" // quit
 	KeyFilter = "/"
 	KeyBranch = "b"
+	KeyHelp   = "?"
 )
 
 // ApplyKeyMap overrides the package-level key bindings from a loaded
@@ -47,6 +48,7 @@ func ApplyKeyMap(km config.KeyMap) {
 	setIfNotEmpty(&KeyC, km.Checkout)
 	setIfNotEmpty(&KeyFilter, km.Filter)
 	setIfNotEmpty(&KeyBranch, km.Branch)
+	setIfNotEmpty(&KeyHelp, km.Help)
 	setIfNotEmpty(&KeyQ, km.Quit)
 }
 

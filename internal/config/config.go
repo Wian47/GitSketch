@@ -23,6 +23,7 @@ type KeyMap struct {
 	Checkout string `toml:"checkout"`
 	Filter   string `toml:"filter"`
 	Branch   string `toml:"branch"`
+	Help     string `toml:"help"`
 	Quit     string `toml:"quit"`
 }
 
@@ -38,7 +39,7 @@ func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up: "up", Down: "down", Top: "g", Bottom: "G",
 		PageUp: "pgup", PageDown: "pgdown", Enter: "enter",
-		Checkout: "c", Filter: "/", Branch: "b", Quit: "q",
+		Checkout: "c", Filter: "/", Branch: "b", Help: "?", Quit: "q",
 	}
 }
 

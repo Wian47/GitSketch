@@ -198,3 +198,20 @@ func TestFilterDebounceCmdFiresWithGeneration(t *testing.T) {
 		t.Fatal("timed out waiting for debounce command")
 	}
 }
+
+func TestHandleKeyTogglesHelpMode(t *testing.T) {
+	m := Model{width: 80, height: 24, allCommits: sampleCommits()}
+	m.applyFilter()
+
+	updated, _ := m.handleKey(tea.KeyPressMsg{Code: '?', Text: "?"})
+	m = updated.(Model)
+	if !m.helpMode {
+		t.Fatal("expected '?' to open help mode")
+	}
+
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = updated.(Model)
+	if m.helpMode {
+		t.Fatal("expected esc to close help mode")
+	}
+}
