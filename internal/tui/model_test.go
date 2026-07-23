@@ -475,3 +475,93 @@ func TestUpdateCommitDoneMsgFailure(t *testing.T) {
 		t.Fatal("expected error notify style")
 	}
 }
+
+func TestOpenStagingDiffNoOpWhenTreeClean(t *testing.T) {
+	m := Model{wtSelected: true}
+	cmd := m.openStagingDiff()
+	if cmd != nil {
+		t.Fatal("expected no command when the working tree is clean")
+	}
+	if m.showDiff {
+		t.Fatal("expected showDiff to stay false when there's nothing to open")
+	}
+}
+
+func TestOpenStagingDiffSetsState(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 1, wtStatus: sampleWtStatus()} // unstaged1.txt
+	cmd := m.openStagingDiff()
+	if cmd == nil {
+		t.Fatal("expected a load-diff command")
+	}
+	if !m.showDiff || !m.stagingDiffMode {
+		t.Fatal("expected showDiff and stagingDiffMode to be set")
+	}
+	if m.stagingFilePath != "unstaged1.txt" || m.stagingFileStaged {
+		t.Fatalf("expected unstaged1.txt/unstaged, got path=%q staged=%v", m.stagingFilePath, m.stagingFileStaged)
+	}
+}
+
+func TestUpdateStagingDiffLoadedMsg(t *testing.T) {
+	m := Model{}
+	hunks := []git.Hunk{{Header: "@@ -1,1 +1,1 @@", Lines: []string{"@@ -1,1 +1,1 @@", "-a", "+b"}}}
+	updated, _ := m.Update(stagingDiffLoadedMsg{path: "a.txt", header: "diff --git a/a.txt b/a.txt", hunks: hunks})
+	mm := updated.(Model)
+	if len(mm.stagingHunks) != 1 || mm.stagingFileHeader != "diff --git a/a.txt b/a.txt" {
+		t.Fatalf("expected hunks/header to be set, got %+v", mm)
+	}
+}
+
+func TestToggleSelectedHunkOutOfRangeIsNoOp(t *testing.T) {
+	m := Model{stagingHunkCursor: 5, stagingHunks: nil}
+	if cmd := m.toggleSelectedHunk(); cmd != nil {
+		t.Fatal("expected no-op when there are no hunks")
+	}
+}
+
+func TestToggleSelectedHunkReturnsCommand(t *testing.T) {
+	m := Model{
+		stagingHunkCursor: 0,
+		stagingHunks:      []git.Hunk{{Header: "@@ -1,1 +1,1 @@", Lines: []string{"@@ -1,1 +1,1 @@", "-a", "+b"}}},
+		stagingFileHeader: "diff --git a/a.txt b/a.txt",
+		stagingFilePath:   "a.txt",
+		stagingFileStaged: false,
+	}
+	if cmd := m.toggleSelectedHunk(); cmd == nil {
+		t.Fatal("expected a command to stage the selected hunk")
+	}
+}
+
+func TestHandleKeyEnterOnWorkingTreeOpensStagingDiff(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 1, wtStatus: sampleWtStatus()}
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm := updated.(Model)
+	if !mm.stagingDiffMode {
+		t.Fatal("expected Enter on the working tree to open staging diff mode")
+	}
+	if cmd == nil {
+		t.Fatal("expected a load command")
+	}
+}
+
+func TestHandleKeyHunkNavigationInStagingMode(t *testing.T) {
+	m := Model{
+		showDiff:        true,
+		stagingDiffMode: true,
+		stagingHunks: []git.Hunk{
+			{Header: "@@ -1,1 +1,1 @@"},
+			{Header: "@@ -5,1 +5,1 @@"},
+		},
+		stagingHunkCursor: 0,
+	}
+	updated, _ := m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	mm := updated.(Model)
+	if mm.stagingHunkCursor != 1 {
+		t.Fatalf("expected cursor to move to hunk 1, got %d", mm.stagingHunkCursor)
+	}
+
+	updated, _ = mm.handleKey(tea.KeyPressMsg{Code: tea.KeyEscape})
+	mm = updated.(Model)
+	if mm.showDiff || mm.stagingDiffMode {
+		t.Fatal("expected esc to close staging diff mode")
+	}
+}

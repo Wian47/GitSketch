@@ -60,6 +60,20 @@ type stagingDoneMsg struct {
 	err    error
 }
 
+type stagingDiffLoadedMsg struct {
+	path   string
+	staged bool
+	header string
+	hunks  []git.Hunk
+	err    error
+}
+
+type hunkStagingDoneMsg struct {
+	path   string
+	staged bool // which view (staged/unstaged) we were operating against
+	err    error
+}
+
 // ─── Model ──────────────────────────────────────────────────────────────────
 
 // Model holds the entire application state for the Bubbletea program.
@@ -83,6 +97,13 @@ type Model struct {
 	showDiff    bool
 	diffContent string
 	diffScroll  int
+
+	stagingDiffMode   bool // true when the fullscreen view (showDiff) is hunk-staging mode, not a plain commit diff
+	stagingFileHeader string
+	stagingHunks      []git.Hunk
+	stagingHunkCursor int
+	stagingFilePath   string
+	stagingFileStaged bool // whether the currently-open diff is the staged or unstaged view of stagingFilePath
 
 	// Search / Filter State
 	searchMode  bool
@@ -208,6 +229,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case stagingDiffLoadedMsg:
+		if msg.err != nil {
+			m.diffContent = fmt.Sprintf("Error loading diff: %v", msg.err)
+			return m, nil
+		}
+		m.stagingFileHeader = msg.header
+		m.stagingHunks = msg.hunks
+		if m.stagingHunkCursor >= len(m.stagingHunks) {
+			m.stagingHunkCursor = 0
+		}
+		return m, nil
+
+	case hunkStagingDoneMsg:
+		if msg.err != nil {
+			m.notification = fmt.Sprintf(" ✗ %s", msg.err.Error())
+			m.notifyStyle = NotifyErrorStyle
+			return m, clearNotifyAfter(3 * time.Second)
+		}
+		action := "staged"
+		if msg.staged {
+			action = "unstaged"
+		}
+		m.notification = fmt.Sprintf(" ✓ hunk %s in %s", action, msg.path)
+		m.notifyStyle = NotifySuccessStyle
+		return m, tea.Batch(
+			loadStagingDiffCmd(msg.path, msg.staged),
+			loadStatusCmd(),
+			clearNotifyAfter(3*time.Second),
+		)
+
 	case checkoutDoneMsg:
 		m.confirmCheckout = false
 		if msg.result.Success {
@@ -294,7 +345,11 @@ func (m Model) View() tea.View {
 	} else if m.helpMode {
 		content = m.renderHelpOverlay()
 	} else if m.showDiff {
-		content = m.renderDiffView()
+		if m.stagingDiffMode {
+			content = m.renderStagingDiffView()
+		} else {
+			content = m.renderDiffView()
+		}
 	} else if len(m.graphRows) == 0 {
 		content = lipgloss.Place(
 			m.width, m.height,
@@ -317,6 +372,37 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// ── Mode: Fullscreen Diff Viewer ──
 	if m.showDiff {
+		if m.stagingDiffMode {
+			switch key {
+			case KeyEsc, KeyQ:
+				m.showDiff = false
+				m.stagingDiffMode = false
+				m.stagingHunks = nil
+				return m, nil
+			case KeyUp, KeyK:
+				if m.stagingHunkCursor > 0 {
+					m.stagingHunkCursor--
+				}
+				return m, nil
+			case KeyDown, KeyJ:
+				if m.stagingHunkCursor < len(m.stagingHunks)-1 {
+					m.stagingHunkCursor++
+				}
+				return m, nil
+			case "space":
+				return m, m.toggleSelectedHunk()
+			}
+			// msg.String() renders the escape key's Code as "esc", not
+			// "escape" (KeyEsc), so fall back to checking the raw code —
+			// mirrors the same workaround in the Help Overlay branch above.
+			if msg.Code == tea.KeyEscape {
+				m.showDiff = false
+				m.stagingDiffMode = false
+				m.stagingHunks = nil
+				return m, nil
+			}
+			return m, nil
+		}
 		switch key {
 		case KeyEsc, KeyEnter, KeyQ:
 			m.showDiff = false
@@ -587,6 +673,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case KeyEnter:
+		if m.wtSelected {
+			return m, m.openStagingDiff()
+		}
 		c := m.selectedCommit()
 		if c != nil {
 			m.showDiff = true
@@ -713,6 +802,43 @@ func (m Model) unstageSelectedFile() tea.Cmd {
 		return nil
 	}
 	return unstageFileCmd(ref.entry.Path)
+}
+
+// openStagingDiff opens the fullscreen hunk-staging view for whichever
+// working-tree file is currently focused. Returns nil (no-op) if the
+// working tree is clean.
+func (m *Model) openStagingDiff() tea.Cmd {
+	ref, ok := m.selectedWorkingTreeFile()
+	if !ok {
+		return nil
+	}
+	m.showDiff = true
+	m.stagingDiffMode = true
+	m.stagingFilePath = ref.entry.Path
+	m.stagingFileStaged = ref.staged
+	m.stagingHunkCursor = 0
+	return loadStagingDiffCmd(ref.entry.Path, ref.staged)
+}
+
+// toggleSelectedHunk stages the hunk under the cursor if we're viewing the
+// unstaged diff, or unstages it if we're viewing the staged diff.
+func (m Model) toggleSelectedHunk() tea.Cmd {
+	if m.stagingHunkCursor < 0 || m.stagingHunkCursor >= len(m.stagingHunks) {
+		return nil
+	}
+	hunk := m.stagingHunks[m.stagingHunkCursor]
+	header := m.stagingFileHeader
+	path := m.stagingFilePath
+	staged := m.stagingFileStaged
+	return func() tea.Msg {
+		var err error
+		if staged {
+			err = git.UnstageHunk(header, hunk)
+		} else {
+			err = git.StageHunk(header, hunk)
+		}
+		return hunkStagingDoneMsg{path: path, staged: staged, err: err}
+	}
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -1228,10 +1354,55 @@ func (m Model) renderDiffView() string {
 	return strings.Join(rendered, "\n")
 }
 
+// renderStagingDiffView renders every hunk of the currently-open
+// working-tree file diff, highlighting the hunk under stagingHunkCursor.
+func (m Model) renderStagingDiffView() string {
+	if len(m.stagingHunks) == 0 {
+		return lipgloss.Place(
+			m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			DimStyle.Render("No changes left in this file."),
+		)
+	}
+
+	var rendered []string
+	title := fmt.Sprintf(" %s (esc to return, space to stage/unstage hunk)", m.stagingFilePath)
+	rendered = append(rendered, SectionHeaderStyle.Render(title))
+	rendered = append(rendered, "")
+
+	for i, h := range m.stagingHunks {
+		for _, l := range h.Lines {
+			var styled string
+			switch {
+			case strings.HasPrefix(l, "+"):
+				styled = FileAddedStyle.Render(l)
+			case strings.HasPrefix(l, "-"):
+				styled = FileDeletedStyle.Render(l)
+			case strings.HasPrefix(l, "@@"):
+				styled = lipgloss.NewStyle().Foreground(lipgloss.Color("#4FC3F7")).Render(l)
+			default:
+				styled = BodyStyle.Render(l)
+			}
+			if i == m.stagingHunkCursor {
+				styled = SelectedRowStyle.Width(m.width).Render(styled)
+			}
+			rendered = append(rendered, styled)
+		}
+	}
+
+	for len(rendered) < m.height-1 {
+		rendered = append(rendered, "")
+	}
+	rendered = append(rendered, m.renderHelpBar())
+	return strings.Join(rendered, "\n")
+}
+
 func (m Model) renderHelpBar() string {
 	var text string
 
-	if m.showDiff {
+	if m.showDiff && m.stagingDiffMode {
+		text = "  ↑/k ↓/j Hunk  space Stage/Unstage  esc Close"
+	} else if m.showDiff {
 		text = "  ↑/k Up  ↓/j Down  pgup/pgdn Scroll  enter/esc/q Close"
 	} else if m.searchMode {
 		text = "  Filter: " + m.searchQuery + "█ (esc Clear, enter Apply)"
@@ -1325,6 +1496,17 @@ func loadDiffCmd(hash string) tea.Cmd {
 	return func() tea.Msg {
 		diff, err := git.GetCommitDiff(hash)
 		return diffLoadedMsg{hash: hash, diff: diff, err: err}
+	}
+}
+
+func loadStagingDiffCmd(path string, staged bool) tea.Cmd {
+	return func() tea.Msg {
+		diff, err := git.GetWorkingTreeDiff(path, staged)
+		if err != nil {
+			return stagingDiffLoadedMsg{path: path, staged: staged, err: err}
+		}
+		header, hunks := git.ParseHunks(diff)
+		return stagingDiffLoadedMsg{path: path, staged: staged, header: header, hunks: hunks}
 	}
 }
 
