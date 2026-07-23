@@ -4,6 +4,8 @@ import (
 	"image/color"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/Wian47/GitSketch/internal/config"
 )
 
 // ─── Color Palette ──────────────────────────────────────────────────────────
@@ -88,117 +90,76 @@ var (
 )
 
 func init() {
-	// ── Branch lane colors (vibrant, high-contrast on dark backgrounds) ──
-	BranchColors = []color.Color{
-		lipgloss.Color("#B388FF"), // soft purple
-		lipgloss.Color("#69F0AE"), // mint green
-		lipgloss.Color("#FFD54F"), // amber
-		lipgloss.Color("#4FC3F7"), // sky blue
-		lipgloss.Color("#FF8A65"), // coral
-		lipgloss.Color("#80CBC4"), // teal
-		lipgloss.Color("#F48FB1"), // pink
-		lipgloss.Color("#AED581"), // lime
+	ApplyTheme(config.DefaultTheme())
+}
+
+// ApplyTheme rebuilds every package-level style/color var from t. Called
+// once at startup with the built-in defaults (via init), and again with the
+// user's loaded config if they've customized any colors.
+func ApplyTheme(t config.Theme) {
+	BranchColors = BranchColors[:0]
+	for _, hex := range t.BranchColors {
+		BranchColors = append(BranchColors, lipgloss.Color(hex))
 	}
 
-	// ── Graph ──
-	GraphLineStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#546E7A"))
+	GraphLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.GraphLine))
 
-	// ── Row selection ──
 	SelectedRowStyle = lipgloss.NewStyle().
-		Background(lipgloss.Color("#1A237E")).
+		Background(lipgloss.Color(t.SelectedRowBg)).
 		Bold(true)
 
 	NormalRowStyle = lipgloss.NewStyle()
 
-	// ── Commit metadata ──
-	HashStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFD54F"))
+	HashStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Hash))
+	AuthorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Author))
+	DateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Date)).Italic(true)
+	SubjectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Subject))
+	BodyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Body))
 
-	AuthorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#80CBC4"))
-
-	DateStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#90A4AE")).
-		Italic(true)
-
-	SubjectStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ECEFF1"))
-
-	BodyStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#B0BEC5"))
-
-	// ── Ref badges ──
 	BranchRefStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#1B5E20")).
-		Background(lipgloss.Color("#69F0AE")).
+		Foreground(lipgloss.Color(t.BranchRefFg)).
+		Background(lipgloss.Color(t.BranchRefBg)).
 		Bold(true).
 		Padding(0, 1)
 
 	TagRefStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#BF360C")).
-		Background(lipgloss.Color("#FF8A65")).
+		Foreground(lipgloss.Color(t.TagRefFg)).
+		Background(lipgloss.Color(t.TagRefBg)).
 		Bold(true).
 		Padding(0, 1)
 
 	HeadRefStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#311B92")).
-		Background(lipgloss.Color("#B388FF")).
+		Foreground(lipgloss.Color(t.HeadRefFg)).
+		Background(lipgloss.Color(t.HeadRefBg)).
 		Bold(true).
 		Padding(0, 1)
 
-	// ── Pane borders ──
-	PaneBorderColor = lipgloss.Color("#37474F")
+	PaneBorderColor = lipgloss.Color(t.PaneBorder)
 
 	TitleStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#E0E0E0")).
+		Foreground(lipgloss.Color(t.Title)).
 		Bold(true).
 		Padding(0, 1)
 
-	// ── Help bar ──
 	HelpBarStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#78909C")).
-		Background(lipgloss.Color("#263238"))
+		Foreground(lipgloss.Color(t.HelpBarFg)).
+		Background(lipgloss.Color(t.HelpBarBg))
 
-	// ── Notifications ──
-	NotifySuccessStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00E676")).
-		Bold(true)
+	NotifySuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Success)).Bold(true)
+	NotifyErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Error)).Bold(true)
 
-	NotifyErrorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FF5252")).
-		Bold(true)
+	FileModifiedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Modified)).Bold(true)
+	FileAddedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Added)).Bold(true)
+	FileDeletedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Deleted)).Bold(true)
 
-	// ── File status ──
-	FileModifiedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFD54F")).
-		Bold(true)
+	DimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Dim))
+	LogoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Logo)).Bold(true)
 
-	FileAddedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#69F0AE")).
-		Bold(true)
-
-	FileDeletedStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FF5252")).
-		Bold(true)
-
-	// ── Misc ──
-	DimStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#546E7A"))
-
-	LogoStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#B388FF")).
-		Bold(true)
-
-	DetailLabelStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#78909C")).
-		Bold(true)
-
-	DetailValueStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#ECEFF1"))
+	DetailLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.DetailLabel)).Bold(true)
+	DetailValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.DetailValue))
 
 	SectionHeaderStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#B388FF")).
+		Foreground(lipgloss.Color(t.SectionHeader)).
 		Bold(true).
 		Underline(true)
 }

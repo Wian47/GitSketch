@@ -24,6 +24,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, warning)
 	}
 	tui.ApplyKeyMap(cfg.KeyMap)
+	tui.ApplyTheme(cfg.Theme)
 
 	// Initialize and run the Bubbletea program.
 	model := tui.NewModel()

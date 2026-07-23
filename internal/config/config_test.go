@@ -74,3 +74,37 @@ func TestLoadMalformedFileFallsBackWithWarning(t *testing.T) {
 		t.Fatalf("expected defaults on malformed file, got %+v", cfg.KeyMap)
 	}
 }
+
+func TestDefaultThemeHasAllBranchColors(t *testing.T) {
+	theme := DefaultTheme()
+	if len(theme.BranchColors) != 8 {
+		t.Fatalf("expected 8 branch colors, got %d", len(theme.BranchColors))
+	}
+	if theme.Hash != "#FFD54F" {
+		t.Fatalf("Hash = %q, want %q", theme.Hash, "#FFD54F")
+	}
+}
+
+func TestLoadMergesPartialTheme(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgDir := filepath.Join(dir, "gitsketch")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := "[theme]\nhash = \"#FF0000\"\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, warning := Load()
+	if warning != "" {
+		t.Fatalf("expected no warning, got %q", warning)
+	}
+	if cfg.Theme.Hash != "#FF0000" {
+		t.Fatalf("Theme.Hash = %q, want %q", cfg.Theme.Hash, "#FF0000")
+	}
+	if cfg.Theme.Dim != DefaultTheme().Dim {
+		t.Fatalf("expected untouched Theme.Dim to keep default, got %q", cfg.Theme.Dim)
+	}
+}
