@@ -2574,12 +2574,16 @@ func TestUnstageSelectedFileOnlyActsOnStaged(t *testing.T) {
 		t.Fatal("expected a command unstaging a staged file")
 	}
 }
+```
 
+`lipgloss.Style` (v2) contains a `[]color.Color` field and a `func(string) string` field, so it is not comparable with `==`/`!=` (this is a compile error, not a lint warning) — use `reflect.DeepEqual` instead, and add `"reflect"` to `model_test.go`'s import block if not already present. Both notify styles set no `Transform`, so the `func` field is always nil on both sides and `reflect.DeepEqual` compares correctly.
+
+```go
 func TestUpdateStagingDoneMsgSuccess(t *testing.T) {
 	m := Model{}
 	updated, cmd := m.Update(stagingDoneMsg{action: "staged", path: "a.txt"})
 	mm := updated.(Model)
-	if mm.notifyStyle != NotifySuccessStyle {
+	if !reflect.DeepEqual(mm.notifyStyle, NotifySuccessStyle) {
 		t.Fatal("expected success notify style")
 	}
 	if !strings.Contains(mm.notification, "staged") || !strings.Contains(mm.notification, "a.txt") {
@@ -2594,7 +2598,7 @@ func TestUpdateStagingDoneMsgError(t *testing.T) {
 	m := Model{}
 	updated, _ := m.Update(stagingDoneMsg{action: "staged", path: "a.txt", err: errTest})
 	mm := updated.(Model)
-	if mm.notifyStyle != NotifyErrorStyle {
+	if !reflect.DeepEqual(mm.notifyStyle, NotifyErrorStyle) {
 		t.Fatal("expected error notify style")
 	}
 }
@@ -2841,12 +2845,16 @@ func TestHandleKeyCommitInputEmptyMessageDoesNotSubmit(t *testing.T) {
 		t.Fatal("expected no command when submitting an empty commit message")
 	}
 }
+```
 
+Note: `lipgloss.Style` (v2) is not comparable with `==`/`!=` (it contains a `[]color.Color` field and a `func(string) string` field — compile error, not a lint warning). Use `reflect.DeepEqual` instead, and add `"reflect"` to `model_test.go`'s import block if not already present (Task 11 already added it, if executed first).
+
+```go
 func TestUpdateCommitDoneMsgSuccess(t *testing.T) {
 	m := Model{}
 	updated, cmd := m.Update(commitDoneMsg{result: git.CommitResult{Success: true, Message: "1 file changed"}})
 	mm := updated.(Model)
-	if mm.notifyStyle != NotifySuccessStyle {
+	if !reflect.DeepEqual(mm.notifyStyle, NotifySuccessStyle) {
 		t.Fatal("expected success notify style")
 	}
 	if cmd == nil {
@@ -2858,7 +2866,7 @@ func TestUpdateCommitDoneMsgFailure(t *testing.T) {
 	m := Model{}
 	updated, _ := m.Update(commitDoneMsg{result: git.CommitResult{Success: false, Message: "nothing to commit"}})
 	mm := updated.(Model)
-	if mm.notifyStyle != NotifyErrorStyle {
+	if !reflect.DeepEqual(mm.notifyStyle, NotifyErrorStyle) {
 		t.Fatal("expected error notify style")
 	}
 }
