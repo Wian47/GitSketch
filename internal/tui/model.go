@@ -403,12 +403,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "/":
+	case KeyFilter:
 		m.searchMode = true
 		m.searchQuery = ""
 		return m, nil
 
-	case "b":
+	case KeyBranch:
 		m.branchMode = true
 		m.branchSubMode = ""
 		return m, nil

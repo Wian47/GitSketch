@@ -1,3 +1,4 @@
+// main.go
 package main
 
 import (
@@ -6,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Wian47/GitSketch/internal/config"
 	"github.com/Wian47/GitSketch/internal/git"
 	"github.com/Wian47/GitSketch/internal/tui"
 )
@@ -16,6 +18,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fatal: not a git repository (or any of the parent directories)")
 		os.Exit(1)
 	}
+
+	cfg, warning := config.Load()
+	if warning != "" {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+	tui.ApplyKeyMap(cfg.KeyMap)
 
 	// Initialize and run the Bubbletea program.
 	model := tui.NewModel()

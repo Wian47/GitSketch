@@ -1,9 +1,17 @@
+// internal/tui/keys.go
 package tui
 
-import "fmt"
+import (
+	"fmt"
 
-// Key binding constants
-const (
+	"github.com/Wian47/GitSketch/internal/config"
+)
+
+// Key bindings. These are package-level vars, not consts, so ApplyKeyMap
+// can override them from the user's loaded config at startup. Vim-style
+// alternates (KeyK, KeyJ, KeyHome, KeyEnd) are always active and are not
+// user-configurable.
+var (
 	KeyUp     = "up"
 	KeyDown   = "down"
 	KeyK      = "k"
@@ -21,7 +29,32 @@ const (
 	KeyEsc    = "escape"
 	KeyQ      = "q"      // quit
 	KeyCtrlC  = "ctrl+c" // quit
+	KeyFilter = "/"
+	KeyBranch = "b"
 )
+
+// ApplyKeyMap overrides the package-level key bindings from a loaded
+// config.KeyMap. Empty fields are left untouched, so a config file only
+// needs to specify the bindings it wants to change.
+func ApplyKeyMap(km config.KeyMap) {
+	setIfNotEmpty(&KeyUp, km.Up)
+	setIfNotEmpty(&KeyDown, km.Down)
+	setIfNotEmpty(&KeyG, km.Top)
+	setIfNotEmpty(&KeyShiftG, km.Bottom)
+	setIfNotEmpty(&KeyPgUp, km.PageUp)
+	setIfNotEmpty(&KeyPgDown, km.PageDown)
+	setIfNotEmpty(&KeyEnter, km.Enter)
+	setIfNotEmpty(&KeyC, km.Checkout)
+	setIfNotEmpty(&KeyFilter, km.Filter)
+	setIfNotEmpty(&KeyBranch, km.Branch)
+	setIfNotEmpty(&KeyQ, km.Quit)
+}
+
+func setIfNotEmpty(dst *string, val string) {
+	if val != "" {
+		*dst = val
+	}
+}
 
 // HelpText returns the formatted help bar text
 func HelpText() string {
