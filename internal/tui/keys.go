@@ -32,6 +32,10 @@ var (
 	KeyFilter = "/"
 	KeyBranch = "b"
 	KeyHelp   = "?"
+
+	KeyStageFile   = "a"
+	KeyUnstageFile = "u"
+	KeyDiscard     = "x"
 )
 
 // ApplyKeyMap overrides the package-level key bindings from a loaded
@@ -50,6 +54,9 @@ func ApplyKeyMap(km config.KeyMap) {
 	setIfNotEmpty(&KeyBranch, km.Branch)
 	setIfNotEmpty(&KeyHelp, km.Help)
 	setIfNotEmpty(&KeyQ, km.Quit)
+	setIfNotEmpty(&KeyStageFile, km.StageFile)
+	setIfNotEmpty(&KeyUnstageFile, km.UnstageFile)
+	setIfNotEmpty(&KeyDiscard, km.Discard)
 }
 
 func setIfNotEmpty(dst *string, val string) {

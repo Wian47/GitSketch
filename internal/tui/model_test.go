@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/Wian47/GitSketch/internal/git"
 )
+
+var errTest = fmt.Errorf("boom")
 
 func sampleCommits() []git.Commit {
 	return []git.Commit{
@@ -338,5 +342,69 @@ func TestRenderDetailPaneShowsWorkingTreeFiles(t *testing.T) {
 	out := m.renderDetailPane(76, 20)
 	if !strings.Contains(out, "staged.txt") || !strings.Contains(out, "unstaged1.txt") {
 		t.Fatalf("expected detail pane to list working tree files, got: %s", out)
+	}
+}
+
+func TestStageSelectedFileOnlyActsOnUnstaged(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 0, wtStatus: sampleWtStatus()} // index 0 is staged.txt (already staged)
+	if cmd := m.stageSelectedFile(); cmd != nil {
+		t.Fatal("expected no-op staging a file that's already staged")
+	}
+
+	m.wtFileCursor = 1 // unstaged1.txt
+	if cmd := m.stageSelectedFile(); cmd == nil {
+		t.Fatal("expected a command staging an unstaged file")
+	}
+}
+
+func TestUnstageSelectedFileOnlyActsOnStaged(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 1, wtStatus: sampleWtStatus()} // unstaged1.txt
+	if cmd := m.unstageSelectedFile(); cmd != nil {
+		t.Fatal("expected no-op unstaging a file that's already unstaged")
+	}
+
+	m.wtFileCursor = 0 // staged.txt
+	if cmd := m.unstageSelectedFile(); cmd == nil {
+		t.Fatal("expected a command unstaging a staged file")
+	}
+}
+
+func TestUpdateStagingDoneMsgSuccess(t *testing.T) {
+	m := Model{}
+	updated, cmd := m.Update(stagingDoneMsg{action: "staged", path: "a.txt"})
+	mm := updated.(Model)
+	if !reflect.DeepEqual(mm.notifyStyle, NotifySuccessStyle) {
+		t.Fatal("expected success notify style")
+	}
+	if !strings.Contains(mm.notification, "staged") || !strings.Contains(mm.notification, "a.txt") {
+		t.Fatalf("expected notification to mention the action and path, got %q", mm.notification)
+	}
+	if cmd == nil {
+		t.Fatal("expected a refresh command to be returned")
+	}
+}
+
+func TestUpdateStagingDoneMsgError(t *testing.T) {
+	m := Model{}
+	updated, _ := m.Update(stagingDoneMsg{action: "staged", path: "a.txt", err: errTest})
+	mm := updated.(Model)
+	if !reflect.DeepEqual(mm.notifyStyle, NotifyErrorStyle) {
+		t.Fatal("expected error notify style")
+	}
+}
+
+func TestHandleKeyDiscardOnlyPromptsForUnstagedFile(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 0, wtStatus: sampleWtStatus()} // staged.txt
+	updated, _ := m.handleKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	mm := updated.(Model)
+	if mm.confirmDiscard {
+		t.Fatal("expected discard to not prompt for a staged file")
+	}
+
+	m.wtFileCursor = 1 // unstaged1.txt
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	mm = updated.(Model)
+	if !mm.confirmDiscard {
+		t.Fatal("expected discard to prompt for an unstaged file")
 	}
 }

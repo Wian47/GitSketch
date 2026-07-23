@@ -25,6 +25,10 @@ type KeyMap struct {
 	Branch   string `toml:"branch"`
 	Help     string `toml:"help"`
 	Quit     string `toml:"quit"`
+
+	StageFile   string `toml:"stage_file"`
+	UnstageFile string `toml:"unstage_file"`
+	Discard     string `toml:"discard"`
 }
 
 // Config is the full set of user-configurable GitSketch settings.
@@ -40,6 +44,7 @@ func DefaultKeyMap() KeyMap {
 		Up: "up", Down: "down", Top: "g", Bottom: "G",
 		PageUp: "pgup", PageDown: "pgdown", Enter: "enter",
 		Checkout: "c", Filter: "/", Branch: "b", Help: "?", Quit: "q",
+		StageFile: "a", UnstageFile: "u", Discard: "x",
 	}
 }
 

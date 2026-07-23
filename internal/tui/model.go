@@ -50,6 +50,12 @@ type clearNotifyMsg struct{}
 
 type filterDebounceMsg struct{ gen int }
 
+type stagingDoneMsg struct {
+	action string // "staged", "unstaged", or "discarded"
+	path   string
+	err    error
+}
+
 // ─── Model ──────────────────────────────────────────────────────────────────
 
 // Model holds the entire application state for the Bubbletea program.
@@ -101,6 +107,7 @@ type Model struct {
 
 	// Mode
 	confirmCheckout bool   // showing checkout confirmation dialog
+	confirmDiscard  bool   // showing discard-changes confirmation for the focused working-tree file
 	notification    string // transient status message
 	notifyStyle     lipgloss.Style
 
@@ -210,6 +217,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			loadStatusCmd(),
 			clearNotifyAfter(3*time.Second),
 		)
+
+	case stagingDoneMsg:
+		if msg.err != nil {
+			m.notification = fmt.Sprintf(" ✗ %s", msg.err.Error())
+			m.notifyStyle = NotifyErrorStyle
+		} else {
+			m.notification = fmt.Sprintf(" ✓ %s %s", msg.action, msg.path)
+			m.notifyStyle = NotifySuccessStyle
+		}
+		return m, tea.Batch(loadStatusCmd(), clearNotifyAfter(3*time.Second))
 
 	case clearNotifyMsg:
 		m.notification = ""
@@ -417,6 +434,22 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// ── Mode: Discard Confirmation ──
+	if m.confirmDiscard {
+		switch key {
+		case KeyY:
+			m.confirmDiscard = false
+			if ref, ok := m.selectedWorkingTreeFile(); ok {
+				return m, discardFileCmd(ref.entry.Path)
+			}
+			return m, nil
+		case KeyN, KeyEsc:
+			m.confirmDiscard = false
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// ── Normal Mode ──
 	switch key {
 	case KeyQ, KeyCtrlC:
@@ -454,6 +487,26 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		c := m.selectedCommit()
 		if c != nil {
 			m.confirmCheckout = true
+		}
+		return m, nil
+
+	case KeyStageFile:
+		if m.wtSelected {
+			return m, m.stageSelectedFile()
+		}
+		return m, nil
+
+	case KeyUnstageFile:
+		if m.wtSelected {
+			return m, m.unstageSelectedFile()
+		}
+		return m, nil
+
+	case KeyDiscard:
+		if m.wtSelected {
+			if ref, ok := m.selectedWorkingTreeFile(); ok && !ref.staged {
+				m.confirmDiscard = true
+			}
 		}
 		return m, nil
 
@@ -578,6 +631,26 @@ func (m Model) selectedWorkingTreeFile() (wtFileRef, bool) {
 		return wtFileRef{}, false
 	}
 	return entries[m.wtFileCursor], true
+}
+
+// stageSelectedFile stages the working-tree file under the cursor, or does
+// nothing if it's already staged (or nothing is selected).
+func (m Model) stageSelectedFile() tea.Cmd {
+	ref, ok := m.selectedWorkingTreeFile()
+	if !ok || ref.staged {
+		return nil
+	}
+	return stageFileCmd(ref.entry.Path)
+}
+
+// unstageSelectedFile unstages the working-tree file under the cursor, or
+// does nothing if it's already unstaged (or nothing is selected).
+func (m Model) unstageSelectedFile() tea.Cmd {
+	ref, ok := m.selectedWorkingTreeFile()
+	if !ok || !ref.staged {
+		return nil
+	}
+	return unstageFileCmd(ref.entry.Path)
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -1115,8 +1188,12 @@ func (m Model) renderHelpBar() string {
 			hash = c.ShortHash
 		}
 		text = NotifyErrorStyle.Render(ConfirmText(hash))
+	} else if m.confirmDiscard {
+		text = NotifyErrorStyle.Render("  Discard changes to this file? (y/n)")
 	} else if m.notification != "" {
 		text = m.notifyStyle.Render(m.notification)
+	} else if m.wtSelected {
+		text = fmt.Sprintf("  ↑/k ↓/j Files  %s Stage  %s Unstage  %s Discard  q Quit", KeyStageFile, KeyUnstageFile, KeyDiscard)
 	} else {
 		text = "  ↑/k Up  ↓/j Down  g/G Top/Bottom  enter Diff  / Filter  b Branch  c Checkout  q Quit"
 	}
@@ -1191,6 +1268,24 @@ func checkoutCmd(hash string) tea.Cmd {
 	return func() tea.Msg {
 		result := git.Checkout(hash)
 		return checkoutDoneMsg{result: result}
+	}
+}
+
+func stageFileCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		return stagingDoneMsg{action: "staged", path: path, err: git.StageFile(path)}
+	}
+}
+
+func unstageFileCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		return stagingDoneMsg{action: "unstaged", path: path, err: git.UnstageFile(path)}
+	}
+}
+
+func discardFileCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		return stagingDoneMsg{action: "discarded", path: path, err: git.DiscardFile(path)}
 	}
 }
 
