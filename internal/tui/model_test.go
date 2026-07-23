@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -230,5 +231,112 @@ func TestHandleKeyTogglesHelpMode(t *testing.T) {
 	m = updated.(Model)
 	if m.helpMode {
 		t.Fatal("expected esc to close help mode")
+	}
+}
+
+func sampleWtStatus() git.Status {
+	return git.Status{
+		Branch: "main",
+		Staged: []git.StatusEntry{
+			{Status: "M", Path: "staged.txt"},
+		},
+		Unstaged: []git.StatusEntry{
+			{Status: "M", Path: "unstaged1.txt"},
+			{Status: "??", Path: "unstaged2.txt"},
+		},
+	}
+}
+
+func TestMoveCursorUpFromTopCommitEntersWorkingTree(t *testing.T) {
+	m := Model{allCommits: sampleCommits(), wtStatus: sampleWtStatus()}
+	m.applyFilter()
+	m.cursor = 0
+
+	m.moveCursor(-1)
+
+	if !m.wtSelected {
+		t.Fatal("expected Up from cursor 0 to select the working tree row")
+	}
+	if m.wtFileCursor != 0 {
+		t.Fatalf("expected wtFileCursor 0 on entry, got %d", m.wtFileCursor)
+	}
+}
+
+func TestMoveCursorWithinWorkingTreeFiles(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 0, wtStatus: sampleWtStatus()}
+
+	m.moveCursor(1)
+	if !m.wtSelected || m.wtFileCursor != 1 {
+		t.Fatalf("expected to move to file 1 within working tree, got wtSelected=%v wtFileCursor=%d", m.wtSelected, m.wtFileCursor)
+	}
+
+	m.moveCursor(1)
+	if !m.wtSelected || m.wtFileCursor != 2 {
+		t.Fatalf("expected to move to file 2 within working tree, got wtSelected=%v wtFileCursor=%d", m.wtSelected, m.wtFileCursor)
+	}
+}
+
+func TestMoveCursorDownPastLastFileExitsToCommits(t *testing.T) {
+	m := Model{allCommits: sampleCommits(), wtSelected: true, wtFileCursor: 2, wtStatus: sampleWtStatus()}
+	m.applyFilter()
+
+	m.moveCursor(1)
+
+	if m.wtSelected {
+		t.Fatal("expected moving down past the last file to exit the working tree row")
+	}
+	if m.cursor != 0 {
+		t.Fatalf("expected cursor to land on commit 0, got %d", m.cursor)
+	}
+}
+
+func TestMoveCursorUpFromWorkingTreeStaysPut(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 0, wtStatus: sampleWtStatus()}
+	m.moveCursor(-1)
+	if !m.wtSelected || m.wtFileCursor != 0 {
+		t.Fatal("expected Up at the top file of the working tree to be a no-op")
+	}
+}
+
+func TestSelectedCommitNilWhenWorkingTreeSelected(t *testing.T) {
+	m := Model{allCommits: sampleCommits(), wtSelected: true}
+	m.applyFilter()
+	if c := m.selectedCommit(); c != nil {
+		t.Fatalf("expected nil selectedCommit while working tree is selected, got %+v", c)
+	}
+}
+
+func TestSelectedWorkingTreeFile(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 1, wtStatus: sampleWtStatus()}
+	ref, ok := m.selectedWorkingTreeFile()
+	if !ok {
+		t.Fatal("expected a selected working tree file")
+	}
+	if ref.staged || ref.entry.Path != "unstaged1.txt" {
+		t.Fatalf("expected unstaged1.txt (unstaged), got %+v staged=%v", ref.entry, ref.staged)
+	}
+}
+
+func TestSelectedWorkingTreeFileEmptyReturnsFalse(t *testing.T) {
+	m := Model{wtSelected: true, wtFileCursor: 0}
+	if _, ok := m.selectedWorkingTreeFile(); ok {
+		t.Fatal("expected no selected file when the working tree is clean")
+	}
+}
+
+func TestRenderGraphPaneShowsWorkingTreeRow(t *testing.T) {
+	m := Model{allCommits: sampleCommits(), wtStatus: sampleWtStatus(), width: 80, height: 24}
+	m.applyFilter()
+	out := m.renderGraphPane(76, 20)
+	if !strings.Contains(out, "Working Tree") {
+		t.Fatalf("expected graph pane to show the working tree row, got: %s", out)
+	}
+}
+
+func TestRenderDetailPaneShowsWorkingTreeFiles(t *testing.T) {
+	m := Model{wtSelected: true, wtStatus: sampleWtStatus(), width: 80, height: 24}
+	out := m.renderDetailPane(76, 20)
+	if !strings.Contains(out, "staged.txt") || !strings.Contains(out, "unstaged1.txt") {
+		t.Fatalf("expected detail pane to list working tree files, got: %s", out)
 	}
 }

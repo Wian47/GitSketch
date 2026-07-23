@@ -59,7 +59,8 @@ type Model struct {
 	filteredCommits []git.Commit
 	graphRows       []graph.GraphRow
 	files           []git.FileChange
-	filesHash       string // hash of the commit whose files are loaded
+	filesHash       string     // hash of the commit whose files are loaded
+	wtStatus        git.Status // last-loaded working tree status (staged/unstaged files)
 
 	// Status bar state
 	repoBranch    string
@@ -89,11 +90,14 @@ type Model struct {
 	branchInput   string
 
 	// UI State
-	cursor    int // index into filteredCommits of the selected commit
-	scrollOff int // vertical scroll offset for the graph pane
-	width     int // terminal width
-	height    int // terminal height
+	cursor    int  // index into filteredCommits of the selected commit
+	scrollOff int  // vertical scroll offset for the graph pane
+	width     int  // terminal width
+	height    int  // terminal height
 	helpMode  bool // showing the full keybinding help overlay
+
+	wtSelected   bool // true when focus is on the working-tree row/file list, not a commit
+	wtFileCursor int  // index into wtFileEntries() when wtSelected is true
 
 	// Mode
 	confirmCheckout bool   // showing checkout confirmation dialog
@@ -171,6 +175,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.repoBehind = msg.status.Behind
 			m.dirtyStaged = len(msg.status.Staged)
 			m.dirtyUnstaged = len(msg.status.Unstaged)
+			m.wtStatus = msg.status
+			total := m.dirtyStaged + m.dirtyUnstaged
+			if m.wtFileCursor >= total {
+				m.wtFileCursor = total - 1
+			}
+			if m.wtFileCursor < 0 {
+				m.wtFileCursor = 0
+			}
 		}
 		return m, nil
 
@@ -427,11 +439,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadFilesIfNeeded()
 
 	case KeyG, KeyHome:
+		m.wtSelected = false
 		m.cursor = 0
 		m.scrollOff = 0
 		return m, m.loadFilesIfNeeded()
 
 	case KeyShiftG, KeyEnd:
+		m.wtSelected = false
 		m.cursor = m.commitRowCount() - 1
 		m.adjustScroll()
 		return m, m.loadFilesIfNeeded()
@@ -534,9 +548,71 @@ func (m Model) commitRowCount() int {
 	return count
 }
 
+// wtFileRef pairs a working-tree status entry with whether it came from the
+// staged or unstaged list, so callers can tell them apart after they've
+// been combined into one navigable sequence.
+type wtFileRef struct {
+	entry  git.StatusEntry
+	staged bool
+}
+
+// wtFileEntries returns the working tree's staged files followed by its
+// unstaged files, as one combined, indexable sequence — this ordering is
+// what wtFileCursor indexes into.
+func (m Model) wtFileEntries() []wtFileRef {
+	entries := make([]wtFileRef, 0, len(m.wtStatus.Staged)+len(m.wtStatus.Unstaged))
+	for _, e := range m.wtStatus.Staged {
+		entries = append(entries, wtFileRef{entry: e, staged: true})
+	}
+	for _, e := range m.wtStatus.Unstaged {
+		entries = append(entries, wtFileRef{entry: e, staged: false})
+	}
+	return entries
+}
+
+// selectedWorkingTreeFile returns the file at wtFileCursor, or false if the
+// working tree is clean (or the cursor is out of range).
+func (m Model) selectedWorkingTreeFile() (wtFileRef, bool) {
+	entries := m.wtFileEntries()
+	if m.wtFileCursor < 0 || m.wtFileCursor >= len(entries) {
+		return wtFileRef{}, false
+	}
+	return entries[m.wtFileCursor], true
+}
+
 func (m *Model) moveCursor(delta int) {
+	if m.wtSelected {
+		total := len(m.wtStatus.Staged) + len(m.wtStatus.Unstaged)
+		if total == 0 {
+			if delta > 0 {
+				m.wtSelected = false
+				m.cursor = 0
+				m.adjustScroll()
+			}
+			return
+		}
+		newCursor := m.wtFileCursor + delta
+		if newCursor < 0 {
+			return // already at the top file — nothing above the working tree row
+		}
+		if newCursor >= total {
+			m.wtSelected = false
+			m.cursor = 0
+			m.adjustScroll()
+			return
+		}
+		m.wtFileCursor = newCursor
+		return
+	}
+
 	total := m.commitRowCount()
 	if total == 0 {
+		return
+	}
+	if m.cursor == 0 && delta == -1 {
+		m.wtSelected = true
+		m.wtFileCursor = 0
+		m.adjustScroll()
 		return
 	}
 	m.cursor += delta
@@ -585,6 +661,9 @@ func (m Model) visibleRows() int {
 }
 
 func (m Model) selectedCommit() *git.Commit {
+	if m.wtSelected {
+		return nil
+	}
 	commitIdx := 0
 	for i := range m.graphRows {
 		if m.graphRows[i].Commit != nil {
@@ -643,8 +722,14 @@ func (m Model) renderLayout() string {
 }
 
 func (m Model) renderGraphPane(width, height int) string {
+	wtRow := m.renderWorkingTreeRow(width)
+	height--
+	if height < 0 {
+		height = 0
+	}
+
 	if len(m.graphRows) == 0 {
-		return DimStyle.Render("No matching commits.")
+		return wtRow + "\n" + DimStyle.Render("No matching commits.")
 	}
 
 	maxGraphCols := graph.MaxColumns(m.graphRows)
@@ -676,7 +761,7 @@ func (m Model) renderGraphPane(width, height int) string {
 				actualCommitIdx++
 			}
 		}
-		isSelected := actualCommitIdx == m.cursor
+		isSelected := !m.wtSelected && actualCommitIdx == m.cursor
 
 		meta := m.renderCommitMeta(row.Commit, metaWidth)
 		line := graphStr + "  " + meta
@@ -688,7 +773,23 @@ func (m Model) renderGraphPane(width, height int) string {
 		lines = append(lines, line)
 	}
 
-	return strings.Join(lines, "\n")
+	return wtRow + "\n" + strings.Join(lines, "\n")
+}
+
+// renderWorkingTreeRow renders the single pinned line representing the
+// working tree, above the scrollable commit graph.
+func (m Model) renderWorkingTreeRow(width int) string {
+	staged, unstaged := len(m.wtStatus.Staged), len(m.wtStatus.Unstaged)
+	var label string
+	if staged == 0 && unstaged == 0 {
+		label = "● Working Tree (clean)"
+	} else {
+		label = fmt.Sprintf("● Working Tree (%d staged, %d unstaged)", staged, unstaged)
+	}
+	if m.wtSelected {
+		return SelectedRowStyle.Width(width).Render(label)
+	}
+	return DimStyle.Render(label)
 }
 
 func (m Model) renderGraphCells(row graph.GraphRow, maxCols int) string {
@@ -782,6 +883,10 @@ func (m Model) renderCommitMeta(c *git.Commit, width int) string {
 }
 
 func (m Model) renderDetailPane(width, height int) string {
+	if m.wtSelected {
+		return m.renderWorkingTreeDetail(width, height)
+	}
+
 	c := m.selectedCommit()
 	if c == nil {
 		return DimStyle.Render("No commit selected.")
@@ -880,6 +985,55 @@ func (m Model) renderDetailPane(width, height int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// renderWorkingTreeDetail lists the working tree's staged and unstaged
+// files, highlighting whichever one wtFileCursor currently points at.
+func (m Model) renderWorkingTreeDetail(width, height int) string {
+	var lines []string
+	lines = append(lines, SectionHeaderStyle.Render("Working Tree"))
+	lines = append(lines, "")
+
+	entries := m.wtFileEntries()
+	if len(entries) == 0 {
+		lines = append(lines, DimStyle.Render("Nothing to commit, working tree clean."))
+		return strings.Join(lines, "\n")
+	}
+
+	if len(m.wtStatus.Staged) > 0 {
+		lines = append(lines, SectionHeaderStyle.Render(fmt.Sprintf("Staged (%d)", len(m.wtStatus.Staged))))
+	}
+	for i, ref := range entries {
+		if i == len(m.wtStatus.Staged) && len(m.wtStatus.Unstaged) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, SectionHeaderStyle.Render(fmt.Sprintf("Unstaged (%d)", len(m.wtStatus.Unstaged))))
+		}
+		row := renderWtFileRow(ref, width)
+		if i == m.wtFileCursor {
+			row = SelectedRowStyle.Width(width).Render(row)
+		}
+		lines = append(lines, row)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderWtFileRow(ref wtFileRef, width int) string {
+	var statusStyle lipgloss.Style
+	switch ref.entry.Status {
+	case "M":
+		statusStyle = FileModifiedStyle
+	case "A", "??":
+		statusStyle = FileAddedStyle
+	case "D":
+		statusStyle = FileDeletedStyle
+	default:
+		statusStyle = DimStyle
+	}
+	path := ref.entry.Path
+	if len(path) > width-6 && width > 7 {
+		path = "…" + path[len(path)-(width-7):]
+	}
+	return "  " + statusStyle.Render(ref.entry.Status) + " " + DimStyle.Render(path)
 }
 
 // renderDiffView renders the fullscreen, syntax-colored unified diff.
