@@ -315,3 +315,38 @@ func TestGetCommitDiff(t *testing.T) {
 		t.Fatalf("expected diff to contain added line, got: %s", diff)
 	}
 }
+
+func TestGetWorkingTreeDiffUnstagedVsStaged(t *testing.T) {
+	initTestRepo(t)
+	writeAndCommit(t, "a.txt", "line1\nline2\n", "first commit")
+
+	if err := os.WriteFile("a.txt", []byte("line1\nline2-changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	unstagedDiff, err := GetWorkingTreeDiff("a.txt", false)
+	if err != nil {
+		t.Fatalf("GetWorkingTreeDiff(unstaged) error = %v", err)
+	}
+	if !strings.Contains(unstagedDiff, "line2-changed") {
+		t.Fatalf("expected unstaged diff to contain the change, got: %s", unstagedDiff)
+	}
+
+	stagedDiffBefore, err := GetWorkingTreeDiff("a.txt", true)
+	if err != nil {
+		t.Fatalf("GetWorkingTreeDiff(staged) error = %v", err)
+	}
+	if stagedDiffBefore != "" {
+		t.Fatalf("expected empty staged diff before staging, got: %s", stagedDiffBefore)
+	}
+
+	runGit(t, "add", "a.txt")
+
+	stagedDiffAfter, err := GetWorkingTreeDiff("a.txt", true)
+	if err != nil {
+		t.Fatalf("GetWorkingTreeDiff(staged) error = %v", err)
+	}
+	if !strings.Contains(stagedDiffAfter, "line2-changed") {
+		t.Fatalf("expected staged diff to contain the change after staging, got: %s", stagedDiffAfter)
+	}
+}

@@ -71,6 +71,24 @@ func GetCommitDiff(hash string) (string, error) {
 	return string(output), nil
 }
 
+// GetWorkingTreeDiff retrieves the unified diff for a single path in the
+// working tree: the unstaged diff (working tree vs index) if staged is
+// false, or the staged diff (index vs HEAD) if staged is true.
+func GetWorkingTreeDiff(path string, staged bool) (string, error) {
+	args := []string{"diff", "--color=never"}
+	if staged {
+		args = append(args, "--cached")
+	}
+	args = append(args, "--", path)
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff: %w: %s", err, string(output))
+	}
+	return string(output), nil
+}
+
 // CreateBranch creates a new branch pointing to the specified commit.
 func CreateBranch(name, hash string) error {
 	cmd := exec.Command("git", "branch", name, hash)
