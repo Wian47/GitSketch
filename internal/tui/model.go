@@ -41,6 +41,11 @@ type checkoutDoneMsg struct {
 	result git.CheckoutResult
 }
 
+type statusLoadedMsg struct {
+	status git.Status
+	err    error
+}
+
 type clearNotifyMsg struct{}
 
 type filterDebounceMsg struct{ gen int }
@@ -55,6 +60,13 @@ type Model struct {
 	graphRows       []graph.GraphRow
 	files           []git.FileChange
 	filesHash       string // hash of the commit whose files are loaded
+
+	// Status bar state
+	repoBranch    string
+	repoAhead     int
+	repoBehind    int
+	dirtyStaged   int
+	dirtyUnstaged int
 
 	// Fullscreen Diff View State
 	showDiff    bool
@@ -108,7 +120,7 @@ func NewModel() Model {
 
 // Init returns the initial command to parse the git log.
 func (m Model) Init() tea.Cmd {
-	return parseCommitsCmd()
+	return tea.Batch(parseCommitsCmd(), loadStatusCmd())
 }
 
 // Update handles all incoming messages and updates the model.
@@ -152,6 +164,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case statusLoadedMsg:
+		if msg.err == nil {
+			m.repoBranch = msg.status.Branch
+			m.repoAhead = msg.status.Ahead
+			m.repoBehind = msg.status.Behind
+			m.dirtyStaged = len(msg.status.Staged)
+			m.dirtyUnstaged = len(msg.status.Unstaged)
+		}
+		return m, nil
+
 	case diffLoadedMsg:
 		if msg.err == nil && msg.hash != "" {
 			m.diffContent = msg.diff
@@ -173,6 +195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh the DAG and clear notification after delay.
 		return m, tea.Batch(
 			parseCommitsCmd(),
+			loadStatusCmd(),
 			clearNotifyAfter(3*time.Second),
 		)
 
@@ -591,7 +614,7 @@ func (m Model) renderLayout() string {
 	leftWidth := m.width * 60 / 100
 	rightWidth := m.width - leftWidth
 
-	paneHeight := m.height - 2
+	paneHeight := m.height - 3
 
 	leftContent := m.renderGraphPane(leftWidth-4, paneHeight-2)
 	rightContent := m.renderDetailPane(rightWidth-4, paneHeight-2)
@@ -613,9 +636,10 @@ func (m Model) renderLayout() string {
 		Render(rightContent)
 
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	statusBar := renderStatusBar(m.width, m.repoBranch, m.repoAhead, m.repoBehind, m.dirtyStaged, m.dirtyUnstaged)
 	helpBar := m.renderHelpBar()
 
-	return lipgloss.JoinVertical(lipgloss.Left, mainView, helpBar)
+	return lipgloss.JoinVertical(lipgloss.Left, statusBar, mainView, helpBar)
 }
 
 func (m Model) renderGraphPane(width, height int) string {
@@ -992,6 +1016,13 @@ func loadFilesCmd(hash string) tea.Cmd {
 	return func() tea.Msg {
 		files, err := git.GetChangedFiles(hash)
 		return filesLoadedMsg{files: files, hash: hash, err: err}
+	}
+}
+
+func loadStatusCmd() tea.Cmd {
+	return func() tea.Msg {
+		status, err := git.GetStatus()
+		return statusLoadedMsg{status: status, err: err}
 	}
 }
 

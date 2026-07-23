@@ -71,6 +71,9 @@ type Theme struct {
 	HelpBarFg string `toml:"help_bar_fg"`
 	HelpBarBg string `toml:"help_bar_bg"`
 
+	StatusBarFg string `toml:"status_bar_fg"`
+	StatusBarBg string `toml:"status_bar_bg"`
+
 	Success string `toml:"success"`
 	Error   string `toml:"error"`
 
@@ -110,6 +113,8 @@ func DefaultTheme() Theme {
 		Title:         "#E0E0E0",
 		HelpBarFg:     "#78909C",
 		HelpBarBg:     "#263238",
+		StatusBarFg:   "#ECEFF1",
+		StatusBarBg:   "#37474F",
 		Success:       "#00E676",
 		Error:         "#FF5252",
 		Modified:      "#FFD54F",

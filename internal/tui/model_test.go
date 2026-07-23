@@ -199,6 +199,23 @@ func TestFilterDebounceCmdFiresWithGeneration(t *testing.T) {
 	}
 }
 
+func TestUpdateStatusLoadedMsg(t *testing.T) {
+	m := Model{}
+	updated, _ := m.Update(statusLoadedMsg{status: git.Status{
+		Branch: "main", Ahead: 1, Behind: 2,
+		Staged:   []git.StatusEntry{{Status: "M", Path: "a.txt"}},
+		Unstaged: []git.StatusEntry{{Status: "M", Path: "b.txt"}, {Status: "??", Path: "c.txt"}},
+	}})
+	mm := updated.(Model)
+
+	if mm.repoBranch != "main" || mm.repoAhead != 1 || mm.repoBehind != 2 {
+		t.Fatalf("expected branch/ahead/behind to update, got %+v", mm)
+	}
+	if mm.dirtyStaged != 1 || mm.dirtyUnstaged != 2 {
+		t.Fatalf("expected dirty counts 1/2, got %d/%d", mm.dirtyStaged, mm.dirtyUnstaged)
+	}
+}
+
 func TestHandleKeyTogglesHelpMode(t *testing.T) {
 	m := Model{width: 80, height: 24, allCommits: sampleCommits()}
 	m.applyFilter()

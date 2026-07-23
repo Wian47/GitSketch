@@ -58,6 +58,9 @@ var (
 	// HelpBarStyle styles the bottom help legend.
 	HelpBarStyle lipgloss.Style
 
+	// StatusBarStyle styles the top status bar line.
+	StatusBarStyle lipgloss.Style
+
 	// NotifySuccessStyle styles success notification messages.
 	NotifySuccessStyle lipgloss.Style
 
@@ -144,6 +147,10 @@ func ApplyTheme(t config.Theme) {
 	HelpBarStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.Color(t.HelpBarFg)).
 		Background(lipgloss.Color(t.HelpBarBg))
+
+	StatusBarStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(t.StatusBarFg)).
+		Background(lipgloss.Color(t.StatusBarBg))
 
 	NotifySuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Success)).Bold(true)
 	NotifyErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Error)).Bold(true)
